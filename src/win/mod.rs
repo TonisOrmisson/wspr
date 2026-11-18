@@ -446,33 +446,38 @@ fn stop() {
 }
 
 fn transcribe(wav: Vec<u8>) {
-    let (hwnd, url, key, model, langs) = with(|a| {
+    let (hwnd, provider, url, key, model, langs) = with(|a| {
         a.state = State::Transcribing;
         let s = &a.settings;
         let p = s.provider_index();
         (
             a.hwnd.0 as isize,
+            stt::PROVIDERS[p].id,
             stt::PROVIDERS[p].url,
             a.keys[p].clone(),
             s.model_of(p).to_string(),
             s.language_list(),
         )
     });
-    log(format!(
-        "Transcribing {} KB with {url}, model {model}, language {}",
-        wav.len() / 1024,
-        if langs.is_empty() {
-            "auto".into()
-        } else {
-            langs.join(",")
-        }
-    ));
+    let lang = if langs.is_empty() {
+        "auto".into()
+    } else {
+        langs.join(",")
+    };
+    // 16 kHz mono 16-bit WAV: 32000 bytes per second after the 44-byte header.
+    let audio_s = wav.len().saturating_sub(44) as f32 / 32000.0;
+    let label = format!("{audio_s:.1} s of audio, {provider} {model}, language {lang}");
     tray(NIM_MODIFY, Some(ICON_BUSY));
     show(View::Transcribing, 0);
     std::thread::spawn(move || {
         let started = Instant::now();
         let result = stt::transcribe(url, &key, &model, &langs, &wav);
-        let p = Box::into_raw(Box::new((result, wav, started.elapsed().as_millis())));
+        let p = Box::into_raw(Box::new((
+            result,
+            wav,
+            started.elapsed().as_millis(),
+            label,
+        )));
         unsafe {
             if PostMessageW(
                 Some(HWND(hwnd as *mut _)),
@@ -488,17 +493,19 @@ fn transcribe(wav: Vec<u8>) {
     });
 }
 
-type DoneResult = (Result<String, String>, Vec<u8>, u128);
+/// Result, the audio (kept on failure), request time in ms, and what was sent (for the log).
+type DoneResult = (Result<String, String>, Vec<u8>, u128, String);
 
-fn on_result((result, wav, ms): DoneResult) {
+fn on_result((result, wav, ms, label): DoneResult) {
     with(|a| a.state = State::Idle);
     tray(NIM_MODIFY, Some(ICON_IDLE));
+    // Request time right after the timestamp, so the log is easy to split into columns.
     match &result {
         Ok(text) => log(format!(
-            "Transcribed {} characters in {ms} ms",
+            "({ms} ms) Transcribed {label}, {} characters",
             text.chars().count()
         )),
-        Err(_) => log(format!("Transcription failed after {ms} ms")),
+        Err(_) => log(format!("({ms} ms) Transcription failed, {label}")),
     }
     match result {
         Ok(text) if text.is_empty() => show(View::Info("No speech detected".into()), 2500),
