@@ -199,11 +199,18 @@ pub fn alert(text: &str) {
 pub fn round_corners(window: &winit::window::Window, w: i32, h: i32) {
     #[cfg(windows)]
     {
+        use windows::Win32::Graphics::Dwm::{DWMWA_BORDER_COLOR, DwmSetWindowAttribute};
         use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
         if let Some(hwnd) = hwnd(window) {
             unsafe {
+                // Windows 11 draws a thin light border on top of borderless windows; turn it off.
+                const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
+                let none = DWMWA_COLOR_NONE;
+                let _ =
+                    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &none as *const u32 as _, 4);
+                // The region also leaves out the top pixel row, where that border sits on Windows 10.
                 // The window owns the region afterwards.
-                let rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, h, h);
+                let rgn = CreateRoundRectRgn(0, 1, w + 1, h + 1, h, h);
                 SetWindowRgn(hwnd, Some(rgn), true);
             }
         }
