@@ -220,6 +220,7 @@ fn hwnd(window: &winit::window::Window) -> Option<windows::Win32::Foundation::HW
 }
 
 /// The overlay must never take focus (the paste would go to it) and must stay out of Alt+Tab.
+/// It must not be a layered window either: OpenGL cannot draw into one, so it would show empty.
 pub fn style_overlay(window: &winit::window::Window) {
     #[cfg(windows)]
     {
@@ -227,11 +228,9 @@ pub fn style_overlay(window: &winit::window::Window) {
         let Some(hwnd) = hwnd(window) else { return };
         unsafe {
             let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-            SetWindowLongPtrW(
-                hwnd,
-                GWL_EXSTYLE,
-                ex | (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as isize,
-            );
+            let ex = (ex | (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0) as isize)
+                & !(WS_EX_LAYERED.0 as isize);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex);
         }
     }
 }

@@ -85,7 +85,6 @@ pub fn run() {
         .with_icon(window_icon())
         .with_decorations(false)
         .with_window_level(egui::WindowLevel::AlwaysOnTop)
-        .with_mouse_passthrough(true)
         .with_taskbar(false)
         .with_active(false)
         .with_resizable(false)
