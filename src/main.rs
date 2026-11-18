@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod applog;
 mod audio;
 mod history;
 mod hotkey;

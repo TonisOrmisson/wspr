@@ -44,6 +44,7 @@ const ID_RETRY: usize = 10;
 const ID_SETTINGS: usize = 12;
 const ID_QUIT: usize = 13;
 const ID_CHECK_UPDATE: usize = 14;
+const ID_VIEW_LOG: usize = 15;
 const ICON_IDLE: usize = 0;
 const ICON_REC: usize = 1;
 const ICON_BUSY: usize = 2;
@@ -99,6 +100,18 @@ fn history_path() -> PathBuf {
 }
 fn failed_path() -> PathBuf {
     data_dir().join("failed.wav")
+}
+
+fn log_path() -> PathBuf {
+    data_dir().join("wspr.log")
+}
+
+/// One line in wspr.log. Never contains dictated text or API keys.
+fn log(msg: impl AsRef<str>) {
+    let _ = crate::applog::append(
+        &log_path(),
+        &format!("{} {}", sys::timestamp(), msg.as_ref()),
+    );
 }
 
 fn message(text: &str) {
@@ -182,8 +195,10 @@ pub fn run() {
         announce_update();
 
         SetTimer(Some(hwnd), T_UPDATE, UPDATE_FIRST_MS, None);
+        log(format!("wspr {VERSION} started"));
         let hotkey_err = register_hotkey().err();
         if let Some(e) = &hotkey_err {
+            log(format!("ERROR {e}"));
             message(e);
         }
         if hotkey_err.is_some() || with(|a| a.active_key().is_empty()) {
@@ -213,6 +228,7 @@ fn announce_update() {
     };
     let _ = std::fs::write(&file, VERSION);
     if updated {
+        log(format!("Updated to {VERSION}"));
         show(View::Info(format!("wspr updated to {VERSION}")), 5000);
     }
 }
@@ -281,6 +297,19 @@ pub(crate) fn apply_settings(mut new: Settings, keys: [String; 2]) -> Result<(),
     }
     new.save(&settings_path())
         .map_err(|e| format!("Could not save settings: {e}"))?;
+    let p = new.provider_index();
+    log(format!(
+        "Settings saved: provider {}, model {}, language {}, hotkey {}, history {}",
+        stt::PROVIDERS[p].id,
+        new.model_of(p),
+        if new.languages.is_empty() {
+            "auto"
+        } else {
+            &new.languages
+        },
+        new.hotkey,
+        new.history_size
+    ));
     with(|a| {
         a.history.truncate(new.history_size);
         a.settings = new;
@@ -338,6 +367,7 @@ fn show(v: View, hide_ms: u32) {
 }
 
 fn fail(e: String) {
+    log(format!("ERROR {e}"));
     sys::play(Sound::Error);
     tray(NIM_MODIFY, Some(ICON_IDLE));
     show(View::Error(e), 6000);
@@ -371,6 +401,7 @@ fn start() {
                 a.state = State::Recording(r);
                 a.hwnd
             });
+            log("Recording started");
             sys::play(Sound::Start);
             tray(NIM_MODIFY, Some(ICON_REC));
             show(View::Recording(Instant::now()), 0);
@@ -397,7 +428,12 @@ fn stop() {
     sys::play(Sound::Stop);
     let (channels, rate) = (rec.channels, rec.rate);
     let samples = rec.finish();
-    if (samples.len() as f32) < MIN_SECONDS * rate as f32 * channels as f32 {
+    let seconds = samples.len() as f32 / (rate.max(1) as f32 * channels.max(1) as f32);
+    log(format!(
+        "Recording stopped after {seconds:.1} s ({rate} Hz, {channels} ch)"
+    ));
+    if seconds < MIN_SECONDS {
+        log("Too short, discarded");
         tray(NIM_MODIFY, Some(ICON_IDLE));
         show(View::Hidden, 0);
         return;
@@ -422,11 +458,21 @@ fn transcribe(wav: Vec<u8>) {
             s.language_list(),
         )
     });
+    log(format!(
+        "Transcribing {} KB with {url}, model {model}, language {}",
+        wav.len() / 1024,
+        if langs.is_empty() {
+            "auto".into()
+        } else {
+            langs.join(",")
+        }
+    ));
     tray(NIM_MODIFY, Some(ICON_BUSY));
     show(View::Transcribing, 0);
     std::thread::spawn(move || {
+        let started = Instant::now();
         let result = stt::transcribe(url, &key, &model, &langs, &wav);
-        let p = Box::into_raw(Box::new((result, wav)));
+        let p = Box::into_raw(Box::new((result, wav, started.elapsed().as_millis())));
         unsafe {
             if PostMessageW(
                 Some(HWND(hwnd as *mut _)),
@@ -442,9 +488,18 @@ fn transcribe(wav: Vec<u8>) {
     });
 }
 
-fn on_result(result: Result<String, String>, wav: Vec<u8>) {
+type DoneResult = (Result<String, String>, Vec<u8>, u128);
+
+fn on_result((result, wav, ms): DoneResult) {
     with(|a| a.state = State::Idle);
     tray(NIM_MODIFY, Some(ICON_IDLE));
+    match &result {
+        Ok(text) => log(format!(
+            "Transcribed {} characters in {ms} ms",
+            text.chars().count()
+        )),
+        Err(_) => log(format!("Transcription failed after {ms} ms")),
+    }
     match result {
         Ok(text) if text.is_empty() => show(View::Info("No speech detected".into()), 2500),
         Ok(text) => {
@@ -534,6 +589,7 @@ fn menu() {
             let _ = AppendMenuW(m, MF_SEPARATOR, 0, None);
         }
         let _ = AppendMenuW(m, MF_STRING, ID_CHECK_UPDATE, w!("Check for updates"));
+        let _ = AppendMenuW(m, MF_STRING, ID_VIEW_LOG, w!("View log"));
         let _ = AppendMenuW(m, MF_STRING, ID_SETTINGS, w!("Settings…"));
         let _ = AppendMenuW(m, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(m, MF_STRING, ID_QUIT, w!("Quit"));
@@ -560,6 +616,7 @@ fn menu() {
         ID_SETTINGS => open_settings(),
         ID_QUIT => quit(),
         ID_CHECK_UPDATE => check_update(true),
+        ID_VIEW_LOG => open_file(&log_path()),
         _ => {}
     }
 }
@@ -572,7 +629,10 @@ fn retry() {
         return open_settings();
     }
     match std::fs::read(failed_path()) {
-        Ok(wav) => transcribe(wav),
+        Ok(wav) => {
+            log("Retrying the failed recording");
+            transcribe(wav)
+        }
         Err(e) => fail(format!("Could not read the recording: {e}")),
     }
 }
@@ -586,6 +646,13 @@ pub(crate) fn open_history() {
     let path = data_dir().join("history.txt");
     if let Err(e) = std::fs::write(&path, text) {
         return fail(format!("Could not write the history file: {e}"));
+    }
+    open_file(&path);
+}
+
+fn open_file(path: &std::path::Path) {
+    if !path.exists() {
+        return message(&format!("{} does not exist yet.", path.display()));
     }
     let p = sys::wide(&path.to_string_lossy());
     unsafe {
@@ -639,6 +706,7 @@ fn on_update((manual, result): UpdateResult) {
     });
     let next = match result {
         Ok(None) => {
+            log("Update check: up to date");
             if manual {
                 show(View::Info(format!("wspr {VERSION} is up to date")), 2500);
             }
@@ -647,11 +715,18 @@ fn on_update((manual, result): UpdateResult) {
         Err(e) => {
             if manual {
                 fail(e);
+            } else {
+                log(format!("Update check failed: {e}"));
             }
             UPDATE_EVERY_MS
         }
         // Never interrupt a dictation; try again a bit later.
-        Ok(Some(_)) if !idle => UPDATE_RETRY_MS,
+        Ok(Some((version, _))) if !idle => {
+            log(format!(
+                "Update {version} found, waiting until dictation is done"
+            ));
+            UPDATE_RETRY_MS
+        }
         Ok(Some((version, bytes))) => match install_update(&version, &bytes) {
             Ok(()) => return quit(),
             Err(e) => {
@@ -669,6 +744,7 @@ fn on_update((manual, result): UpdateResult) {
 fn install_update(version: &str, bytes: &[u8]) -> Result<(), String> {
     let path = std::env::temp_dir().join(format!("wspr-setup-{version}.exe"));
     std::fs::write(&path, bytes).map_err(|e| format!("Could not save the update: {e}"))?;
+    log(format!("Installing update {version}"));
     show(View::Info(format!("Updating to wspr {version}…")), 0);
     let p = sys::wide(&path.to_string_lossy());
     let r = unsafe {
@@ -710,11 +786,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
             }
             WM_UPDATE => on_update(*Box::from_raw(lp.0 as *mut UpdateResult)),
-            WM_DONE => {
-                let b = Box::from_raw(lp.0 as *mut (Result<String, String>, Vec<u8>));
-                let (result, wav) = *b;
-                on_result(result, wav);
-            }
+            WM_DONE => on_result(*Box::from_raw(lp.0 as *mut DoneResult)),
             WM_TIMER => match wp.0 {
                 T_TICK => tick(),
                 T_HIDE => {

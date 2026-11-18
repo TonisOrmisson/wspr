@@ -16,6 +16,7 @@ No account, no telemetry, one ~2 MB `.exe`. You bring your own API key.
 - History of recent transcriptions (10 to 500, or off), viewable from Settings. Useful when the
   text went to the wrong place.
 - If a request fails, the recording is kept and can be retried from the tray menu.
+- A log (tray menu > View log) records recordings, transcriptions, errors and updates.
 - Updates itself: checks GitHub Releases at start and every hour, verifies the download's
   SHA-256 and installs it silently. It never interrupts a dictation.
 
@@ -29,7 +30,8 @@ No account, no telemetry, one ~2 MB `.exe`. You bring your own API key.
 2. On first start the settings window opens. Pick a provider, paste its API key, choose your
    language (or Auto-detect) and, if you like, a different hotkey: click the field and press it.
 
-The tray icon menu has Check for updates, Settings and Quit, plus Retry after a failed request.
+The tray icon menu has Check for updates, View log, Settings and Quit, plus Retry after a
+failed request.
 
 ## Providers
 
@@ -49,6 +51,7 @@ and `gpt-4o-mini-transcribe` on 2027-02-26.
 - Audio goes only to the provider you choose, and only while you dictate.
 - Settings and history live in `%APPDATA%\wspr\`. API keys are encrypted with Windows DPAPI
   (readable only by your Windows user). The history is plain text; set it to Off to keep none.
+- The log (`wspr.log`, at most ~512 KB) never contains dictated text or API keys.
 - The update check is one request per hour to the GitHub API.
 
 ## Build

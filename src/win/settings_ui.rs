@@ -612,6 +612,19 @@ fn save(win: HWND) -> Result<(), String> {
     if values[cur].1.is_empty() {
         return Err("Enter a model name".into());
     }
+    // OpenRouter also lists text-to-speech and chat models; catch those before the first dictation.
+    // If the model list cannot be fetched (offline), the model is accepted as typed.
+    if PROVIDERS[cur].id == "openrouter"
+        && let Some(models) = crate::stt::openrouter_stt_models()
+        && !models.contains(&values[cur].1)
+    {
+        let examples: Vec<&str> = models.iter().take(6).map(String::as_str).collect();
+        return Err(format!(
+            "\"{}\" is not a speech-to-text model on OpenRouter.\n\nSome that are: {}",
+            values[cur].1,
+            examples.join(", ")
+        ));
+    }
     let mut new = Settings {
         provider: PROVIDERS[cur].id.into(),
         languages: selected_language(win),

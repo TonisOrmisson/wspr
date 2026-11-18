@@ -41,6 +41,32 @@ pub fn provider_index(id: &str) -> usize {
     PROVIDERS.iter().position(|p| p.id == id).unwrap_or(0)
 }
 
+/// Model IDs from OpenRouter's model list (`/api/v1/models?output_modalities=transcription`).
+pub fn parse_model_ids(json: &str) -> Option<Vec<String>> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    Some(
+        v["data"]
+            .as_array()?
+            .iter()
+            .filter_map(|m| m["id"].as_str().map(String::from))
+            .collect(),
+    )
+}
+
+/// Speech-to-text model IDs on OpenRouter, or None when the list cannot be fetched.
+#[cfg(windows)]
+pub fn openrouter_stt_models() -> Option<Vec<String>> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(8)))
+        .build()
+        .into();
+    let mut resp = agent
+        .get("https://openrouter.ai/api/v1/models?output_modalities=transcription")
+        .call()
+        .ok()?;
+    parse_model_ids(&resp.body_mut().read_to_string().ok()?)
+}
+
 const BOUNDARY: &str = "wsprBoundary7MA4YWxkTrZu0gW";
 
 /// gpt-transcribe takes a `languages[]` list; other models (and OpenRouter) take one `language`.
@@ -156,6 +182,19 @@ mod tests {
         assert!(!b.contains("languages[]"));
         assert_eq!(provider_index("openrouter"), 1);
         assert_eq!(provider_index("unknown"), 0);
+    }
+
+    #[test]
+    fn parses_model_list() {
+        let json = r#"{"data":[{"id":"google/gemini-3.5-transcribe"},{"id":"deepgram/nova-3"}]}"#;
+        assert_eq!(
+            parse_model_ids(json),
+            Some(vec![
+                "google/gemini-3.5-transcribe".into(),
+                "deepgram/nova-3".into()
+            ])
+        );
+        assert_eq!(parse_model_ids("not json"), None);
     }
 
     #[test]
