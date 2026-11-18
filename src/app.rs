@@ -118,7 +118,8 @@ struct App {
     hotkeys: Option<GlobalHotKeyManager>,
     hotkey: Option<HotKey>,
     tray: Option<TrayIcon>,
-    tray_icons: Vec<Icon>,
+    /// Idle, recording, transcribing; by index, so one that fails to load shifts nothing.
+    tray_icons: [Option<Icon>; 3],
     menu_has_retry: Option<bool>,
     clipboard: Option<arboard::Clipboard>,
     enigo: Option<enigo::Enigo>,
@@ -145,14 +146,11 @@ impl App {
         let settings = Settings::load(&data_path("settings.json"));
         let keys = [0, 1].map(|p| platform::decrypt_key(settings.key_enc_of(p)));
         let icon = |rgba: Vec<u8>| Icon::from_rgba(rgba, 32, 32).ok();
-        let tray_icons: Vec<Icon> = [
+        let tray_icons = [
             icon(include_bytes!("../res/icon-32.rgba").to_vec()),
             icon(circle_rgba([230, 60, 60])),
             icon(circle_rgba([230, 160, 20])),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        ];
         let mut app = Self {
             ctx,
             tx,
@@ -177,17 +175,13 @@ impl App {
             enigo: enigo::Enigo::new(&enigo::Settings::default()).ok(),
             form: None,
         };
-        app.tray = TrayIconBuilder::new()
+        let mut builder = TrayIconBuilder::new()
             .with_tooltip(app.tooltip())
-            .with_icon(
-                app.tray_icons
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| icon(circle_rgba([110, 130, 160])).unwrap()),
-            )
-            .with_menu_on_left_click(true)
-            .build()
-            .ok();
+            .with_menu_on_left_click(true);
+        if let Some(idle) = app.tray_icons[0].clone() {
+            builder = builder.with_icon(idle);
+        }
+        app.tray = builder.build().ok();
         app.refresh_menu();
         log(format!("wspr {VERSION} started"));
         app.announce_update();
@@ -213,7 +207,7 @@ impl App {
     }
 
     fn set_tray_icon(&self, i: usize) {
-        if let (Some(tray), Some(icon)) = (&self.tray, self.tray_icons.get(i)) {
+        if let (Some(tray), Some(Some(icon))) = (&self.tray, self.tray_icons.get(i)) {
             let _ = tray.set_icon(Some(icon.clone()));
         }
     }
