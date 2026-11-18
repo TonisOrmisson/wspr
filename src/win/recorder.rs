@@ -14,10 +14,10 @@ pub struct Recording {
 pub fn start() -> Result<Recording, String> {
     let device = cpal::default_host()
         .default_input_device()
-        .ok_or("Mikrofoni ei leitud")?;
+        .ok_or("No microphone found")?;
     let cfg = device
         .default_input_config()
-        .map_err(|e| format!("Mikrofon: {e}"))?;
+        .map_err(|e| format!("Microphone: {e}"))?;
     let buf = Arc::new(Mutex::new(Vec::new()));
     let (channels, rate, format) = (cfg.channels(), cfg.sample_rate(), cfg.sample_format());
     let config: cpal::StreamConfig = cfg.into();
@@ -26,9 +26,9 @@ pub fn start() -> Result<Recording, String> {
         SampleFormat::I16 => build::<i16>(&device, &config, buf.clone()),
         SampleFormat::U16 => build::<u16>(&device, &config, buf.clone()),
         SampleFormat::I32 => build::<i32>(&device, &config, buf.clone()),
-        f => return Err(format!("Toetamata helivorming: {f}")),
+        f => return Err(format!("Unsupported audio format: {f}")),
     }?;
-    stream.play().map_err(|e| format!("Mikrofon: {e}"))?;
+    stream.play().map_err(|e| format!("Microphone: {e}"))?;
     Ok(Recording {
         stream,
         buf,
@@ -57,7 +57,7 @@ where
             |_| {},
             None,
         )
-        .map_err(|e| format!("Mikrofon: {e}"))
+        .map_err(|e| format!("Microphone: {e}"))
 }
 
 impl Recording {

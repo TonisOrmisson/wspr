@@ -2,7 +2,7 @@
 
 use super::sys::wide;
 use crate::openai::MODELS;
-use crate::settings::Settings;
+use crate::settings::{LANGUAGES, Settings, language_index};
 use std::cell::Cell;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -64,7 +64,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
         let Ok(win) = CreateWindowExW(
             WS_EX_DLGMODALFRAME,
             w!("wsprSettings"),
-            w!("wspr seaded"),
+            w!("wspr settings"),
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             x,
             y,
@@ -131,21 +131,21 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
         };
         let edit = WS_TABSTOP.0 | ES_AUTOHSCROLL as u32;
         let rows: [(&str, i32, &str, u32); 5] = [
+            ("OpenAI API key", ID_KEY, api_key, edit | ES_PASSWORD as u32),
             (
-                "OpenAI API-võti",
-                ID_KEY,
-                api_key,
-                edit | ES_PASSWORD as u32,
-            ),
-            (
-                "Mudel",
+                "Model",
                 ID_MODEL,
                 &s.model,
                 WS_TABSTOP.0 | WS_VSCROLL.0 | CBS_DROPDOWN as u32,
             ),
-            ("Keel (nt et või et,en)", ID_LANG, &s.languages, edit),
-            ("Kiirklahv", ID_HOTKEY, &s.hotkey, edit),
-            ("Sõnavara vihje (valikuline)", ID_PROMPT, &s.prompt, edit),
+            (
+                "Language",
+                ID_LANG,
+                &s.languages,
+                WS_TABSTOP.0 | WS_VSCROLL.0 | CBS_DROPDOWNLIST as u32,
+            ),
+            ("Hotkey", ID_HOTKEY, &s.hotkey, edit),
+            ("Vocabulary hint (optional)", ID_PROMPT, &s.prompt, edit),
         ];
         for (i, (label, id, value, style)) in rows.iter().enumerate() {
             let y = 18.0 + i as f32 * 38.0;
@@ -160,7 +160,35 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
                 22.0,
                 0,
             );
-            if *id == ID_MODEL {
+            if *id == ID_LANG {
+                let combo = child(
+                    w!("COMBOBOX"),
+                    "",
+                    *style,
+                    WINDOW_EX_STYLE(0),
+                    210.0,
+                    y,
+                    280.0,
+                    300.0,
+                    *id,
+                );
+                let mut labels: Vec<&str> = LANGUAGES.iter().map(|l| l.0).collect();
+                // A value typed into an older settings file (e.g. "et,en") stays selectable.
+                let selected = language_index(value).unwrap_or_else(|| {
+                    labels.push(value);
+                    labels.len() - 1
+                });
+                for l in labels {
+                    let wl = wide(l);
+                    SendMessageW(
+                        combo,
+                        CB_ADDSTRING,
+                        Some(WPARAM(0)),
+                        Some(LPARAM(wl.as_ptr() as isize)),
+                    );
+                }
+                SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(selected)), None);
+            } else if *id == ID_MODEL {
                 let combo = child(
                     w!("COMBOBOX"),
                     "",
@@ -199,8 +227,8 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
         }
         child(
             w!("STATIC"),
-            "Kiirklahv nt Ctrl+Shift+Space, Alt+D või F9. Üks vajutus alustab, teine lõpetab.\n\
-             Mudelid peale gpt-transcribe suletakse OpenAI poolt 26.02.2027.",
+            "Hotkey examples: Ctrl+Shift+Space, Alt+D, F9. Press once to start, again to stop.\n\
+             OpenAI shuts down all models except gpt-transcribe on 2027-02-26.",
             0,
             WINDOW_EX_STYLE(0),
             16.0,
@@ -211,7 +239,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
         );
         child(
             w!("BUTTON"),
-            "Salvesta",
+            "Save",
             WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
             WINDOW_EX_STYLE(0),
             290.0,
@@ -222,7 +250,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
         );
         child(
             w!("BUTTON"),
-            "Tühista",
+            "Cancel",
             WS_TABSTOP.0,
             WINDOW_EX_STYLE(0),
             394.0,
@@ -250,16 +278,29 @@ fn text_of(win: HWND, id: i32) -> String {
     }
 }
 
+/// The code of the selected language, or the raw value of a custom entry.
+fn selected_language(win: HWND) -> String {
+    let i = unsafe {
+        GetDlgItem(Some(win), ID_LANG)
+            .map(|c| SendMessageW(c, CB_GETCURSEL, None, None).0)
+            .unwrap_or(-1)
+    };
+    match usize::try_from(i).ok().and_then(|i| LANGUAGES.get(i)) {
+        Some(l) => l.1.to_string(),
+        None => text_of(win, ID_LANG),
+    }
+}
+
 fn save(win: HWND) -> Result<(), String> {
     let new = Settings {
         api_key_enc: String::new(), // filled in by apply_settings
         model: text_of(win, ID_MODEL),
-        languages: text_of(win, ID_LANG),
+        languages: selected_language(win),
         hotkey: text_of(win, ID_HOTKEY),
         prompt: text_of(win, ID_PROMPT),
     };
     if new.model.is_empty() {
-        return Err("Mudel puudub".into());
+        return Err("Model is empty".into());
     }
     super::apply_settings(new, text_of(win, ID_KEY))
 }

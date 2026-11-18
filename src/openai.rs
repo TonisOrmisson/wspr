@@ -56,11 +56,11 @@ pub fn parse_response(status: u16, body: &str) -> Result<String, String> {
         json["text"]
             .as_str()
             .map(|t| t.trim().to_string())
-            .ok_or_else(|| "Vastuses puudub tekst".into())
+            .ok_or_else(|| "No text in the response".into())
     } else {
         Err(format!(
             "HTTP {status}: {}",
-            json["error"]["message"].as_str().unwrap_or("tundmatu viga")
+            json["error"]["message"].as_str().unwrap_or("unknown error")
         ))
     }
 }
@@ -85,12 +85,12 @@ pub fn transcribe(
         .header("Authorization", &format!("Bearer {}", api_key.trim()))
         .header("Content-Type", &content_type)
         .send(&body[..])
-        .map_err(|e| format!("Ühenduse viga: {e}"))?;
+        .map_err(|e| format!("Connection error: {e}"))?;
     let status = resp.status().as_u16();
     let text = resp
         .body_mut()
         .read_to_string()
-        .map_err(|e| format!("Vastuse lugemise viga: {e}"))?;
+        .map_err(|e| format!("Could not read the response: {e}"))?;
     parse_response(status, &text)
 }
 

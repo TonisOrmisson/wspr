@@ -5,6 +5,7 @@ mod history;
 mod hotkey;
 mod openai;
 mod settings;
+mod update;
 #[cfg(windows)]
 mod win;
 

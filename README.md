@@ -16,16 +16,21 @@ The UI is in Estonian, because that is what its author uses.
 - Tray menu with the last 10 transcriptions (click copies to the clipboard) and the full history
   of the last 50. Useful when the text was pasted into the wrong place.
 - If the API request fails, the recording is kept and can be retried from the tray menu.
-- Settings window: OpenAI API key, model, input language(s), hotkey, optional vocabulary hint.
+- Settings window: OpenAI API key, model, input language, hotkey, optional vocabulary hint.
 - Your clipboard text is restored after pasting.
+- Updates itself: checks GitHub Releases at start and once a day (or from the tray menu),
+  verifies the download's SHA-256 and installs it silently. It never interrupts a dictation.
 
 ## Setup
 
-1. Download `wspr.exe` from [Releases](https://github.com/TonisOrmisson/wspr/releases).
-2. Run it. The settings window opens on first start: paste your OpenAI API key.
+1. Download `wspr-setup-x.y.z.exe` from [Releases](https://github.com/TonisOrmisson/wspr/releases)
+   and run it. It installs for your user only (no admin rights) into
+   `%LOCALAPPDATA%\Programs\wspr`, adds wspr to the Start menu and, if you leave the box
+   checked, starts it with Windows. Uninstall from Settings > Apps.
    Windows SmartScreen may warn about an unsigned app: "More info" > "Run anyway".
-3. To start it with Windows, put a shortcut to `wspr.exe` in the folder that opens with
-   `Win+R` > `shell:startup`.
+2. The settings window opens on first start: paste your OpenAI API key.
+
+A portable `wspr.exe` is attached to each release too; it updates itself through the installer.
 
 Settings and history are in `%APPDATA%\wspr\`. The API key is encrypted with Windows DPAPI
 (readable only by your Windows user).
@@ -35,7 +40,7 @@ Settings and history are in `%APPDATA%\wspr\`. The API key is encrypted with Win
 Default is `gpt-transcribe`. The model field is editable. OpenAI shuts down `whisper-1`,
 `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` on 2027-02-26.
 
-Languages are ISO-639-1 codes, e.g. `et`, or several: `et,en`. Leave empty for auto-detection.
+Pick the language you speak, or Auto-detect.
 
 ## Build
 
@@ -46,6 +51,8 @@ cargo build --release
 cargo build --release --target x86_64-pc-windows-gnu
 # unit tests of the platform-independent parts run anywhere
 cargo test
+# installer (NSIS 3)
+makensis -DVERSION=0.2.0 -DEXE=path/to/wspr.exe installer/wspr.nsi
 ```
 
 ## License

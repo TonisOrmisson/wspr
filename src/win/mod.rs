@@ -28,16 +28,23 @@ use windows::core::{PCWSTR, w};
 
 const WM_TRAY: u32 = WM_APP + 1;
 const WM_DONE: u32 = WM_APP + 2;
+const WM_UPDATE: u32 = WM_APP + 3;
 const HOTKEY_ID: i32 = 1;
 const T_TICK: usize = 1;
 const T_HIDE: usize = 2;
 const T_RESTORE: usize = 3;
+const T_UPDATE: usize = 4;
+const UPDATE_FIRST_MS: u32 = 15_000;
+const UPDATE_EVERY_MS: u32 = 24 * 60 * 60 * 1000;
+const UPDATE_RETRY_MS: u32 = 10 * 60 * 1000; // when an update waits for dictation to finish
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_SECONDS: f32 = 600.0; // keeps the WAV under the API's 25 MB limit
 const MIN_SECONDS: f32 = 0.3;
 const ID_RETRY: usize = 10;
 const ID_OPEN_HISTORY: usize = 11;
 const ID_SETTINGS: usize = 12;
 const ID_QUIT: usize = 13;
+const ID_CHECK_UPDATE: usize = 14;
 const ID_HISTORY: usize = 1000;
 const ICON_IDLE: usize = 0;
 const ICON_REC: usize = 1;
@@ -59,6 +66,7 @@ struct App {
     history: Vec<Entry>,
     state: State,
     restore_clip: Option<String>,
+    checking_update: bool,
     icons: [HICON; 3],
     icon: usize,
     taskbar_created: u32,
@@ -97,10 +105,10 @@ fn message(text: &str) {
 
 pub fn run() {
     unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        // DPI awareness comes from the embedded manifest (res/wspr.manifest).
         let _mutex = CreateMutexW(None, true, w!("Local\\wspr-single-instance"));
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            message("wspr juba töötab (vaata salveikooni).");
+            message("wspr is already running (see the tray icon).");
             return;
         }
         let hinst: HINSTANCE = GetModuleHandleW(None).unwrap_or_default().into();
@@ -126,7 +134,7 @@ pub fn run() {
             None,
         ) {
             Ok(h) => h,
-            Err(e) => return message(&format!("Akna loomine ebaõnnestus: {e}")),
+            Err(e) => return message(&format!("Could not create the window: {e}")),
         };
         let settings = Settings::load(&settings_path());
         let api_key = settings::from_hex(&settings.api_key_enc)
@@ -142,8 +150,19 @@ pub fn run() {
             history: history::load(&history_path()),
             state: State::Idle,
             restore_clip: None,
+            checking_update: false,
             icons: [
-                sys::circle_icon(110, 130, 160),
+                // Idle: the app icon embedded by build.rs (resource id 1).
+                LoadImageW(
+                    Some(hinst),
+                    PCWSTR(std::ptr::without_provenance(1)), // MAKEINTRESOURCE(1)
+                    IMAGE_ICON,
+                    GetSystemMetrics(SM_CXSMICON),
+                    GetSystemMetrics(SM_CYSMICON),
+                    LR_DEFAULTCOLOR,
+                )
+                .map(|h| HICON(h.0))
+                .unwrap_or_else(|_| sys::circle_icon(110, 130, 160)),
                 sys::circle_icon(230, 60, 60),
                 sys::circle_icon(230, 160, 20),
             ],
@@ -153,6 +172,7 @@ pub fn run() {
         APP.with(|a| *a.borrow_mut() = Some(app));
         tray(NIM_ADD, None);
 
+        SetTimer(Some(hwnd), T_UPDATE, UPDATE_FIRST_MS, None);
         let hotkey_err = register_hotkey().err();
         if let Some(e) = &hotkey_err {
             message(e);
@@ -182,7 +202,7 @@ fn tray(op: NOTIFY_ICON_MESSAGE, icon: Option<usize>) {
         (
             a.hwnd,
             a.icons[a.icon],
-            format!("wspr: {} alustab ja lõpetab", a.settings.hotkey),
+            format!("wspr: {} starts and stops dictation", a.settings.hotkey),
         )
     });
     let mut nid = NOTIFYICONDATAW {
@@ -214,7 +234,7 @@ fn register_hotkey() -> Result<(), String> {
             vk,
         )
         .map_err(|_| {
-            format!("Kiirklahv {hk} on juba mõne teise programmi kasutuses. Vali seadetes teine.")
+            format!("The hotkey {hk} is already used by another program. Choose another one in Settings.")
         })
     }
 }
@@ -226,10 +246,10 @@ pub(crate) fn apply_settings(mut new: Settings, api_key: String) -> Result<(), S
     new.api_key_enc = if key.is_empty() {
         String::new()
     } else {
-        settings::to_hex(&sys::protect(&key).ok_or("API-võtme krüpteerimine ebaõnnestus")?)
+        settings::to_hex(&sys::protect(&key).ok_or("Could not encrypt the API key")?)
     };
     new.save(&settings_path())
-        .map_err(|e| format!("Seadete salvestamine ebaõnnestus: {e}"))?;
+        .map_err(|e| format!("Could not save settings: {e}"))?;
     with(|a| {
         a.settings = new;
         a.api_key = key;
@@ -363,7 +383,7 @@ fn on_result(result: Result<String, String>, wav: Vec<u8>) {
     with(|a| a.state = State::Idle);
     tray(NIM_MODIFY, Some(ICON_IDLE));
     match result {
-        Ok(text) if text.is_empty() => show(View::Info("Kõnet ei tuvastatud".into()), 2500),
+        Ok(text) if text.is_empty() => show(View::Info("No speech detected".into()), 2500),
         Ok(text) => {
             let _ = std::fs::remove_file(failed_path());
             let saved = with(|a| {
@@ -377,17 +397,17 @@ fn on_result(result: Result<String, String>, wav: Vec<u8>) {
                 history::save(&history_path(), &a.history)
             });
             match (paste(&text), saved) {
-                (Err(e), _) => fail(format!("{e}. Tekst on ajaloos.")),
+                (Err(e), _) => fail(format!("{e}. The text is in the history.")),
                 (Ok(false), Err(e)) => fail(format!(
-                    "Kleepida ei saanud ja ajalugu ei salvestunud ({e}). Tekst on lõikelaual"
+                    "Could not paste or save the history ({e}). The text is on the clipboard"
                 )),
                 (Ok(false), Ok(())) => show(
-                    View::Info("Kleepida ei saanud, tekst on lõikelaual (Ctrl+V)".into()),
+                    View::Info("Could not paste. The text is on the clipboard (Ctrl+V)".into()),
                     5000,
                 ),
-                (Ok(true), Err(e)) => fail(format!(
-                    "Kleebitud, aga ajaloo salvestamine ebaõnnestus: {e}"
-                )),
+                (Ok(true), Err(e)) => {
+                    fail(format!("Pasted, but the history could not be saved: {e}"))
+                }
                 (Ok(true), Ok(())) => show(View::Done, 1200),
             }
         }
@@ -395,7 +415,7 @@ fn on_result(result: Result<String, String>, wav: Vec<u8>) {
             // Keep the audio so the dictation is not lost; the tray menu offers a retry.
             let kept = history::write_atomic(&failed_path(), &wav).is_ok();
             fail(if kept {
-                format!("{e}. Salveikooni menüüst saab uuesti proovida.")
+                format!("{e}. You can retry from the tray menu.")
             } else {
                 e
             });
@@ -455,14 +475,9 @@ fn menu() {
     let cmd = unsafe {
         let Ok(m) = CreatePopupMenu() else { return };
         if labels.is_empty() {
-            let _ = AppendMenuW(m, MF_STRING | MF_GRAYED, 0, w!("Ajalugu on tühi"));
+            let _ = AppendMenuW(m, MF_STRING | MF_GRAYED, 0, w!("No history yet"));
         } else {
-            let _ = AppendMenuW(
-                m,
-                MF_STRING | MF_GRAYED,
-                0,
-                w!("Viimased (klõps kopeerib lõikelauale):"),
-            );
+            let _ = AppendMenuW(m, MF_STRING | MF_GRAYED, 0, w!("Recent (click to copy):"));
             for (i, l) in labels.iter().enumerate() {
                 let wl = sys::wide(l);
                 let _ = AppendMenuW(m, MF_STRING, ID_HISTORY + i, PCWSTR(wl.as_ptr()));
@@ -470,17 +485,13 @@ fn menu() {
         }
         let _ = AppendMenuW(m, MF_SEPARATOR, 0, None);
         if has_failed {
-            let _ = AppendMenuW(
-                m,
-                MF_STRING,
-                ID_RETRY,
-                w!("Proovi ebaõnnestunud salvestust uuesti"),
-            );
+            let _ = AppendMenuW(m, MF_STRING, ID_RETRY, w!("Retry failed recording"));
         }
-        let _ = AppendMenuW(m, MF_STRING, ID_OPEN_HISTORY, w!("Ava kogu ajalugu"));
-        let _ = AppendMenuW(m, MF_STRING, ID_SETTINGS, w!("Seaded…"));
+        let _ = AppendMenuW(m, MF_STRING, ID_OPEN_HISTORY, w!("Open full history"));
+        let _ = AppendMenuW(m, MF_STRING, ID_CHECK_UPDATE, w!("Check for updates"));
+        let _ = AppendMenuW(m, MF_STRING, ID_SETTINGS, w!("Settings…"));
         let _ = AppendMenuW(m, MF_SEPARATOR, 0, None);
-        let _ = AppendMenuW(m, MF_STRING, ID_QUIT, w!("Välju"));
+        let _ = AppendMenuW(m, MF_STRING, ID_QUIT, w!("Quit"));
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
         // Without this the menu does not close when clicking elsewhere.
@@ -504,6 +515,7 @@ fn menu() {
         ID_OPEN_HISTORY => open_history(),
         ID_SETTINGS => open_settings(),
         ID_QUIT => quit(),
+        ID_CHECK_UPDATE => check_update(true),
         c if c >= ID_HISTORY => copy_history(c - ID_HISTORY),
         _ => {}
     }
@@ -514,7 +526,7 @@ fn copy_history(i: usize) {
         return;
     };
     match sys::set_text(&text) {
-        Ok(()) => show(View::Info("Kopeeritud lõikelauale".into()), 1500),
+        Ok(()) => show(View::Info("Copied to clipboard".into()), 1500),
         Err(e) => fail(e),
     }
 }
@@ -528,7 +540,7 @@ fn retry() {
     }
     match std::fs::read(failed_path()) {
         Ok(wav) => transcribe(wav),
-        Err(e) => fail(format!("Salvestust ei saanud lugeda: {e}")),
+        Err(e) => fail(format!("Could not read the recording: {e}")),
     }
 }
 
@@ -536,7 +548,7 @@ fn open_history() {
     let text = with(|a| history::to_text(&a.history));
     let path = data_dir().join("history.txt");
     if let Err(e) = std::fs::write(&path, text) {
-        return fail(format!("Ajaloo faili ei saanud kirjutada: {e}"));
+        return fail(format!("Could not write the history file: {e}"));
     }
     let p = sys::wide(&path.to_string_lossy());
     unsafe {
@@ -549,6 +561,97 @@ fn open_history() {
             SW_SHOWNORMAL,
         );
     }
+}
+
+type UpdateResult = (bool, Result<Option<(String, Vec<u8>)>, String>);
+
+/// Runs the GitHub check and download on a worker thread; the result comes back as WM_UPDATE.
+fn check_update(manual: bool) {
+    let Some(hwnd) = with(|a| {
+        (!a.checking_update).then(|| {
+            a.checking_update = true;
+            a.hwnd.0 as isize
+        })
+    }) else {
+        return;
+    };
+    if manual {
+        show(View::Info("Checking for updates…".into()), 0);
+    }
+    std::thread::spawn(move || {
+        let p = Box::into_raw(Box::new((manual, crate::update::fetch_newer(VERSION))));
+        unsafe {
+            if PostMessageW(
+                Some(HWND(hwnd as *mut _)),
+                WM_UPDATE,
+                WPARAM(0),
+                LPARAM(p as isize),
+            )
+            .is_err()
+            {
+                drop(Box::from_raw(p));
+            }
+        }
+    });
+}
+
+fn on_update((manual, result): UpdateResult) {
+    let (hwnd, idle) = with(|a| {
+        a.checking_update = false;
+        (a.hwnd, matches!(a.state, State::Idle))
+    });
+    let next = match result {
+        Ok(None) => {
+            if manual {
+                show(View::Info(format!("wspr {VERSION} is up to date")), 2500);
+            }
+            UPDATE_EVERY_MS
+        }
+        Err(e) => {
+            if manual {
+                fail(e);
+            }
+            UPDATE_EVERY_MS
+        }
+        // Never interrupt a dictation; try again a bit later.
+        Ok(Some(_)) if !idle => UPDATE_RETRY_MS,
+        Ok(Some((version, bytes))) => match install_update(&version, &bytes) {
+            Ok(()) => return quit(),
+            Err(e) => {
+                fail(e);
+                UPDATE_EVERY_MS
+            }
+        },
+    };
+    unsafe {
+        SetTimer(Some(hwnd), T_UPDATE, next, None);
+    }
+}
+
+/// Starts the silent installer, which replaces wspr.exe and starts the new version.
+fn install_update(version: &str, bytes: &[u8]) -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!("wspr-setup-{version}.exe"));
+    std::fs::write(&path, bytes).map_err(|e| format!("Could not save the update: {e}"))?;
+    show(View::Info(format!("Updating to wspr {version}…")), 0);
+    let p = sys::wide(&path.to_string_lossy());
+    let r = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(p.as_ptr()),
+            w!("/S"),
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    // ShellExecuteW reports success with a value above 32.
+    if r.0 as isize <= 32 {
+        return Err(format!(
+            "Could not start the update installer (code {})",
+            r.0 as isize
+        ));
+    }
+    Ok(())
 }
 
 fn quit() {
@@ -569,6 +672,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     menu();
                 }
             }
+            WM_UPDATE => on_update(*Box::from_raw(lp.0 as *mut UpdateResult)),
             WM_DONE => {
                 let b = Box::from_raw(lp.0 as *mut (Result<String, String>, Vec<u8>));
                 let (result, wav) = *b;
@@ -579,6 +683,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 T_HIDE => {
                     let _ = KillTimer(Some(hwnd), T_HIDE);
                     show(View::Hidden, 0);
+                }
+                T_UPDATE => {
+                    let _ = KillTimer(Some(hwnd), T_UPDATE);
+                    check_update(false);
                 }
                 T_RESTORE => {
                     let _ = KillTimer(Some(hwnd), T_RESTORE);

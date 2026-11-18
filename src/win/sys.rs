@@ -35,7 +35,7 @@ fn open_clipboard() -> Result<(), String> {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    Err("Lõikelauda ei saanud avada".into())
+    Err("Could not open the clipboard".into())
 }
 
 pub fn get_text() -> Option<String> {
@@ -84,7 +84,7 @@ pub fn set_text(s: &str) -> Result<(), String> {
         })()
     };
     let _ = unsafe { CloseClipboard() };
-    r.map_err(|e| format!("Lõikelaud: {e}"))
+    r.map_err(|e| format!("Clipboard: {e}"))
 }
 
 /// False when Windows blocked the input, e.g. the target window runs as administrator.

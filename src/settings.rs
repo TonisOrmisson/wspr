@@ -48,6 +48,46 @@ impl Settings {
     }
 }
 
+/// Shown in the language dropdown: (label, ISO-639-1 code). An empty code means auto-detect.
+pub const LANGUAGES: &[(&str, &str)] = &[
+    ("Auto-detect", ""),
+    ("Arabic", "ar"),
+    ("Bulgarian", "bg"),
+    ("Chinese", "zh"),
+    ("Czech", "cs"),
+    ("Danish", "da"),
+    ("Dutch", "nl"),
+    ("English", "en"),
+    ("Estonian", "et"),
+    ("Finnish", "fi"),
+    ("French", "fr"),
+    ("German", "de"),
+    ("Greek", "el"),
+    ("Hebrew", "he"),
+    ("Hindi", "hi"),
+    ("Hungarian", "hu"),
+    ("Italian", "it"),
+    ("Japanese", "ja"),
+    ("Korean", "ko"),
+    ("Latvian", "lv"),
+    ("Lithuanian", "lt"),
+    ("Norwegian", "no"),
+    ("Polish", "pl"),
+    ("Portuguese", "pt"),
+    ("Romanian", "ro"),
+    ("Russian", "ru"),
+    ("Slovak", "sk"),
+    ("Spanish", "es"),
+    ("Swedish", "sv"),
+    ("Turkish", "tr"),
+    ("Ukrainian", "uk"),
+];
+
+pub fn language_index(code: &str) -> Option<usize> {
+    let code = code.trim().to_ascii_lowercase();
+    LANGUAGES.iter().position(|l| l.1 == code)
+}
+
 pub fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -74,6 +114,13 @@ mod tests {
         assert_eq!(from_hex("abc"), None);
         assert_eq!(from_hex("zz"), None);
         assert_eq!(from_hex("éé"), None);
+    }
+
+    #[test]
+    fn language_dropdown_lookup() {
+        assert_eq!(LANGUAGES[language_index(" ET ").unwrap()].0, "Estonian");
+        assert_eq!(language_index(""), Some(0));
+        assert_eq!(language_index("et,en"), None);
     }
 
     #[test]

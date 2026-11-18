@@ -16,14 +16,14 @@ pub fn parse(s: &str) -> Result<(u32, u32), String> {
             "win" => mods |= MOD_WIN,
             k => {
                 if key.is_some() {
-                    return Err(format!("Kiirklahvis on mitu tavalist klahvi: {s}"));
+                    return Err(format!("The hotkey has more than one main key: {s}"));
                 }
-                key = Some(vk(k).ok_or_else(|| format!("Tundmatu klahv: \"{k}\""))?);
+                key = Some(vk(k).ok_or_else(|| format!("Unknown key: \"{k}\""))?);
             }
         }
     }
     key.map(|k| (mods, k))
-        .ok_or_else(|| format!("Kiirklahvist puudub tavaline klahv: {s}"))
+        .ok_or_else(|| format!("The hotkey has no main key: {s}"))
 }
 
 fn vk(k: &str) -> Option<u32> {

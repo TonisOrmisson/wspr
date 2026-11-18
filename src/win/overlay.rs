@@ -60,14 +60,14 @@ fn text_and_color(v: &View) -> (String, COLORREF) {
         View::Recording(t) => {
             let s = t.elapsed().as_secs();
             (
-                format!("Salvestan   {}:{:02}", s / 60, s % 60),
+                format!("Recording   {}:{:02}", s / 60, s % 60),
                 COLORREF(0x003C3CE6),
             )
         }
-        View::Transcribing => ("Transkribeerin…".into(), COLORREF(0x0014A0E6)),
-        View::Done => ("Valmis".into(), COLORREF(0x0050C850)),
+        View::Transcribing => ("Transcribing…".into(), COLORREF(0x0014A0E6)),
+        View::Done => ("Done".into(), COLORREF(0x0050C850)),
         View::Info(s) => (s.clone(), COLORREF(0x00B4B4B4)),
-        View::Error(s) => (format!("Viga: {s}"), COLORREF(0x003C3CE6)),
+        View::Error(s) => (format!("Error: {s}"), COLORREF(0x003C3CE6)),
     }
 }
 

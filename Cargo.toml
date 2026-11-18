@@ -1,6 +1,6 @@
 [package]
 name = "wspr"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "Minimal Windows dictation: press a hotkey, speak, OpenAI transcribes, text is pasted."
@@ -9,6 +9,7 @@ repository = "https://github.com/TonisOrmisson/wspr"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 cpal = "0.18"
@@ -35,3 +36,6 @@ windows = { version = "0.62", features = [
 lto = true
 strip = true
 codegen-units = 1
+
+[build-dependencies]
+embed-resource = "3"
