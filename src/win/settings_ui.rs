@@ -24,6 +24,8 @@ const ID_KEY_HINT: i32 = 106;
 const ID_VIEW_HISTORY: i32 = 107;
 const ID_PROVIDER: i32 = 108;
 const ID_KEY_LABEL: i32 = 109;
+const ID_MODEL_TEXT: i32 = 110;
+const EM_SETCUEBANNER: u32 = 0x1501;
 
 thread_local! {
     static WINDOW: Cell<Option<HWND>> = const { Cell::new(None) };
@@ -65,7 +67,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, keys: &[String; 2], scale: f32) {
             left: 0,
             top: 0,
             right: px(510.0),
-            bottom: px(380.0),
+            bottom: px(312.0),
         };
         let _ = AdjustWindowRectEx(
             &mut rc,
@@ -79,7 +81,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, keys: &[String; 2], scale: f32) {
         let Ok(win) = CreateWindowExW(
             WS_EX_DLGMODALFRAME,
             w!("wsprSettings"),
-            PCWSTR(wide(concat!("wspr ", env!("CARGO_PKG_VERSION"), " settings")).as_ptr()),
+            w!("wspr settings"),
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             x,
             y,
@@ -329,7 +331,9 @@ pub fn open(hinst: HINSTANCE, s: &Settings, keys: &[String; 2], scale: f32) {
                 }
                 SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(selected)), None);
             } else if *id == ID_MODEL {
-                let combo = child(
+                // A dropdown for providers with a model list, a text field for the others;
+                // both sit in the same place and switching providers shows the right one.
+                child(
                     w!("COMBOBOX"),
                     "",
                     *style,
@@ -340,7 +344,18 @@ pub fn open(hinst: HINSTANCE, s: &Settings, keys: &[String; 2], scale: f32) {
                     200.0,
                     *id,
                 );
-                fill_models(combo, cur, value);
+                child(
+                    w!("EDIT"),
+                    "",
+                    edit,
+                    WS_EX_CLIENTEDGE,
+                    210.0,
+                    y,
+                    280.0,
+                    26.0,
+                    ID_MODEL_TEXT,
+                );
+                show_model_field(win, cur, value);
             } else {
                 child(
                     w!("EDIT"),
@@ -357,14 +372,13 @@ pub fn open(hinst: HINSTANCE, s: &Settings, keys: &[String; 2], scale: f32) {
         }
         child(
             w!("STATIC"),
-            "The hotkey is off while this window is open. Press it once to start dictation, again to stop.\n\
-             OpenAI shuts down all models except gpt-transcribe on 2027-02-26.",
+            concat!("wspr ", env!("CARGO_PKG_VERSION")),
             0,
             WINDOW_EX_STYLE(0),
             16.0,
-            266.0,
-            480.0,
-            64.0,
+            272.0,
+            200.0,
+            22.0,
             0,
         );
         child(
@@ -373,7 +387,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, keys: &[String; 2], scale: f32) {
             WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
             WINDOW_EX_STYLE(0),
             290.0,
-            336.0,
+            266.0,
             96.0,
             30.0,
             IDOK.0,
@@ -384,7 +398,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, keys: &[String; 2], scale: f32) {
             WS_TABSTOP.0,
             WINDOW_EX_STYLE(0),
             394.0,
-            336.0,
+            266.0,
             96.0,
             30.0,
             IDCANCEL.0,
@@ -510,6 +524,40 @@ fn selected_history_size(win: HWND) -> usize {
     }
 }
 
+fn model_field_id(provider: usize) -> i32 {
+    if PROVIDERS[provider].models.is_empty() {
+        ID_MODEL_TEXT
+    } else {
+        ID_MODEL
+    }
+}
+
+fn show_model_field(win: HWND, provider: usize, value: &str) {
+    let free = PROVIDERS[provider].models.is_empty();
+    unsafe {
+        let (Ok(combo), Ok(text)) = (
+            GetDlgItem(Some(win), ID_MODEL),
+            GetDlgItem(Some(win), ID_MODEL_TEXT),
+        ) else {
+            return;
+        };
+        let _ = ShowWindow(combo, if free { SW_HIDE } else { SW_SHOW });
+        let _ = ShowWindow(text, if free { SW_SHOW } else { SW_HIDE });
+        if free {
+            set_text(text, value);
+            let hint = wide(PROVIDERS[provider].model_hint);
+            SendMessageW(
+                text,
+                EM_SETCUEBANNER,
+                Some(WPARAM(1)),
+                Some(LPARAM(hint.as_ptr() as isize)),
+            );
+        } else {
+            fill_models(combo, provider, value);
+        }
+    }
+}
+
 fn fill_models(combo: HWND, provider: usize, value: &str) {
     unsafe {
         SendMessageW(combo, CB_RESETCONTENT, None, None);
@@ -540,7 +588,7 @@ fn switch_provider(win: HWND) {
     }
     let (key, model) = PROVIDER_VALUES.with(|v| {
         let mut v = v.borrow_mut();
-        v[old] = (text_of(win, ID_KEY), text_of(win, ID_MODEL));
+        v[old] = (text_of(win, ID_KEY), text_of(win, model_field_id(old)));
         v[new].clone()
     });
     unsafe {
@@ -550,9 +598,7 @@ fn switch_provider(win: HWND) {
         if let Ok(c) = GetDlgItem(Some(win), ID_KEY) {
             set_text(c, &key); // EN_CHANGE updates the key hint
         }
-        if let Ok(c) = GetDlgItem(Some(win), ID_MODEL) {
-            fill_models(c, new, &model);
-        }
+        show_model_field(win, new, &model);
     }
 }
 
@@ -560,11 +606,11 @@ fn save(win: HWND) -> Result<(), String> {
     let cur = CURRENT_PROVIDER.with(|c| c.get());
     let values = PROVIDER_VALUES.with(|v| {
         let mut v = v.borrow_mut();
-        v[cur] = (text_of(win, ID_KEY), text_of(win, ID_MODEL));
+        v[cur] = (text_of(win, ID_KEY), text_of(win, model_field_id(cur)));
         v.clone()
     });
     if values[cur].1.is_empty() {
-        return Err("Model is empty".into());
+        return Err("Enter a model name".into());
     }
     let mut new = Settings {
         provider: PROVIDERS[cur].id.into(),
@@ -574,10 +620,9 @@ fn save(win: HWND) -> Result<(), String> {
         ..Default::default()
     };
     for (p, (_, model)) in values.iter().enumerate() {
-        let model = if model.is_empty() {
-            PROVIDERS[p].models[0].to_string()
-        } else {
-            model.clone()
+        let model = match PROVIDERS[p].models.first() {
+            Some(default) if model.is_empty() => default.to_string(),
+            _ => model.clone(),
         };
         new.set_provider_values(p, model, String::new()); // keys are encrypted by apply_settings
     }

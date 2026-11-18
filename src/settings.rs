@@ -27,7 +27,7 @@ impl Default for Settings {
             api_key_enc: String::new(),
             model: "gpt-transcribe".into(),
             openrouter_key_enc: String::new(),
-            openrouter_model: "microsoft/mai-transcribe-2".into(),
+            openrouter_model: String::new(),
             languages: "et".into(),
             hotkey: "Ctrl+Shift+Space".into(),
             history_size: 50,

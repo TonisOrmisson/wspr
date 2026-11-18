@@ -5,8 +5,10 @@ pub struct Provider {
     pub label: &'static str,
     pub key_label: &'static str,
     pub url: &'static str,
-    /// Offered in the model dropdown. The field is editable, so other model IDs work too.
+    /// Offered in the model dropdown (editable). Empty: the model is a free text field.
     pub models: &'static [&'static str],
+    /// Grey example text in an empty free-text model field.
+    pub model_hint: &'static str,
 }
 
 /// Index 0 is the default. Settings store per-provider keys and models by this order.
@@ -23,13 +25,15 @@ pub const PROVIDERS: &[Provider] = &[
             "gpt-4o-mini-transcribe",
             "whisper-1",
         ],
+        model_hint: "",
     },
     Provider {
         id: "openrouter",
-        label: "OpenRouter (Microsoft MAI and more)",
+        label: "OpenRouter",
         key_label: "OpenRouter API key",
         url: "https://openrouter.ai/api/v1/audio/transcriptions",
-        models: &["microsoft/mai-transcribe-2"],
+        models: &[],
+        model_hint: "e.g. elevenlabs/scribe-v2",
     },
 ];
 
@@ -147,7 +151,7 @@ mod tests {
 
     #[test]
     fn openrouter_model_uses_single_language() {
-        let b = body_str("microsoft/mai-transcribe-2", &["et"]);
+        let b = body_str("elevenlabs/scribe-v2", &["et"]);
         assert!(b.contains("name=\"language\"\r\n\r\net\r\n"));
         assert!(!b.contains("languages[]"));
         assert_eq!(provider_index("openrouter"), 1);

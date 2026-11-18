@@ -1,8 +1,8 @@
 # wspr
 
 Minimal dictation for Windows 10 and 11. Press a hotkey, speak, press it again: the audio is
-transcribed by OpenAI or by a model on OpenRouter (such as Microsoft MAI-Transcribe-2), and the
-text is pasted where your cursor is.
+transcribed by OpenAI or by any speech-to-text model on OpenRouter, and the text is pasted where
+your cursor is.
 
 No account, no telemetry, one ~2 MB `.exe`. You bring your own API key.
 
@@ -36,9 +36,11 @@ The tray icon menu has Check for updates, Settings and Quit, plus Retry after a 
 | Provider | Default model | Key from |
 |---|---|---|
 | OpenAI | `gpt-transcribe` | [platform.openai.com](https://platform.openai.com/api-keys) |
-| OpenRouter | `microsoft/mai-transcribe-2` | [openrouter.ai](https://openrouter.ai/keys) |
+| OpenRouter | none, type a model ID, e.g. `elevenlabs/scribe-v2` | [openrouter.ai](https://openrouter.ai/keys) |
 
-The model field is editable, so other transcription models of the same provider work too.
+OpenRouter's speech-to-text models are listed at
+[openrouter.ai/models](https://openrouter.ai/models?output_modalities=transcription).
+The OpenAI model field is editable too.
 Each provider keeps its own key and model. OpenAI shuts down `whisper-1`, `gpt-4o-transcribe`
 and `gpt-4o-mini-transcribe` on 2027-02-26.
 
