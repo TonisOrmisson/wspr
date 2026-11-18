@@ -712,6 +712,9 @@ impl App {
     /// Moves the overlay window on screen (bottom centre of the primary monitor) or off it.
     fn place_overlay(&mut self, frame: &eframe::Frame) {
         let want = match &self.overlay {
+            // On Linux the idle overlay stays in place, transparent and click-through: off screen,
+            // X11 reports it occluded and egui stops running its UI, so it never came back.
+            Overlay::Hidden if TRANSPARENT => self.placed.or(Some(false)),
             Overlay::Hidden => None,
             Overlay::Info(_) | Overlay::Error(_) => Some(true),
             _ => Some(false),
@@ -849,15 +852,16 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, _ctx: &egui::Context, frame: &mut eframe::Frame) {
         while let Ok(msg) = self.rx.try_recv() {
             self.handle(msg);
         }
+        // Here and not in ui(): egui skips ui() for a window the system reports as hidden.
+        self.place_overlay(frame);
         self.timers();
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        self.place_overlay(frame);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.paint_overlay(ui);
         self.settings_window(ui);
     }

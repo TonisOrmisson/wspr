@@ -1,6 +1,6 @@
 [package]
 name = "wspr"
-version = "0.10.1"
+version = "0.10.2"
 edition = "2024"
 license = "MIT"
 description = "Minimal dictation for Windows and Linux: press a hotkey, speak, the text is pasted."
