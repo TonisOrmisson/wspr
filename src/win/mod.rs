@@ -378,10 +378,14 @@ fn on_result(result: Result<String, String>, wav: Vec<u8>) {
             });
             match (paste(&text), saved) {
                 (Err(e), _) => fail(format!("{e}. Tekst on ajaloos.")),
-                (Ok(()), Err(e)) => fail(format!(
+                (Ok(false), _) => show(
+                    View::Info("Kleepida ei saanud, tekst on lõikelaual (Ctrl+V)".into()),
+                    5000,
+                ),
+                (Ok(true), Err(e)) => fail(format!(
                     "Kleebitud, aga ajaloo salvestamine ebaõnnestus: {e}"
                 )),
-                (Ok(()), Ok(())) => show(View::Done, 1200),
+                (Ok(true), Ok(())) => show(View::Done, 1200),
             }
         }
         Err(e) => {
@@ -396,10 +400,13 @@ fn on_result(result: Result<String, String>, wav: Vec<u8>) {
     }
 }
 
-fn paste(text: &str) -> Result<(), String> {
+/// Ok(false): the text is on the clipboard but Ctrl+V could not be sent.
+fn paste(text: &str) -> Result<bool, String> {
     let prev = sys::get_text();
     sys::set_text(text)?;
-    sys::send_ctrl_v();
+    if !sys::send_ctrl_v() {
+        return Ok(false); // leave the dictation on the clipboard for a manual paste
+    }
     // shortcut: only text clipboard content is restored; an image on the clipboard is replaced by the dictation.
     if let Some(p) = prev {
         let hwnd = with(|a| {
@@ -410,7 +417,7 @@ fn paste(text: &str) -> Result<(), String> {
             SetTimer(Some(hwnd), T_RESTORE, 600, None);
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 fn tick() {

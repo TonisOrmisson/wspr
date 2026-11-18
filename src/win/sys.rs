@@ -87,7 +87,8 @@ pub fn set_text(s: &str) -> Result<(), String> {
     r.map_err(|e| format!("Lõikelaud: {e}"))
 }
 
-pub fn send_ctrl_v() {
+/// False when Windows blocked the input, e.g. the target window runs as administrator.
+pub fn send_ctrl_v() -> bool {
     let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -108,7 +109,7 @@ pub fn send_ctrl_v() {
         key(VK_V, true),
         key(VK_CONTROL, true),
     ];
-    unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) as usize == inputs.len() }
 }
 
 // ---------- sounds ----------
@@ -180,8 +181,8 @@ pub fn circle_icon(r: u8, g: u8, b: u8) -> HICON {
             let (dx, dy) = ((i % S) as f32 - 15.5, (i / S) as f32 - 15.5);
             let a = (13.0 - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
             let a8 = (a * 255.0) as u32;
-            let m = |c: u8| c as u32 * a8 / 255; // premultiplied alpha
-            (a8 << 24) | (m(r) << 16) | (m(g) << 8) | m(b)
+            // Icons take straight (not premultiplied) alpha.
+            (a8 << 24) | ((r as u32) << 16) | ((g as u32) << 8) | b as u32
         })
         .collect();
     unsafe {

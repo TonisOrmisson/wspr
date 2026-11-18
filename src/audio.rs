@@ -5,6 +5,9 @@ pub const TARGET_RATE: u32 = 16_000;
 /// Interleaved f32 samples at `rate` Hz with `channels` channels -> 16 kHz mono i16.
 /// Downsampling averages each output window (a box filter), which is enough for speech.
 pub fn to_mono_16k(interleaved: &[f32], channels: u16, rate: u32) -> Vec<i16> {
+    if rate == 0 {
+        return Vec::new(); // a broken driver report; avoids an endless output length
+    }
     let ch = channels.max(1) as usize;
     let mono: Vec<f32> = interleaved
         .chunks(ch)
@@ -75,6 +78,7 @@ mod tests {
     fn upsampling_and_empty_input_do_not_panic() {
         assert_eq!(to_mono_16k(&[0.1; 800], 1, 8_000).len(), 1600);
         assert!(to_mono_16k(&[], 2, 44_100).is_empty());
+        assert!(to_mono_16k(&[0.1; 10], 1, 0).is_empty());
     }
 
     #[test]

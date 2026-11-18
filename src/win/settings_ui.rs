@@ -6,6 +6,7 @@ use crate::settings::Settings;
 use std::cell::Cell;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{PCWSTR, w};
 
@@ -18,6 +19,7 @@ const ID_PROMPT: i32 = 105;
 thread_local! {
     static WINDOW: Cell<Option<HWND>> = const { Cell::new(None) };
     static FONT: Cell<HFONT> = Cell::new(HFONT::default());
+    static LAST_FOCUS: Cell<HWND> = Cell::new(HWND::default());
 }
 
 pub fn hwnd() -> Option<HWND> {
@@ -43,7 +45,20 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
         };
         RegisterClassW(&wc); // fails harmlessly when already registered
 
-        let (w, h) = (px(520.0), px(330.0));
+        // Size the client area; the frame and title bar come on top of it.
+        let mut rc = RECT {
+            left: 0,
+            top: 0,
+            right: px(510.0),
+            bottom: px(306.0),
+        };
+        let _ = AdjustWindowRectEx(
+            &mut rc,
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+            false,
+            WS_EX_DLGMODALFRAME,
+        );
+        let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
         let x = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
         let y = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
         let Ok(win) = CreateWindowExW(
@@ -219,11 +234,6 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
 
         let _ = ShowWindow(win, SW_SHOW);
         let _ = SetForegroundWindow(win);
-        if api_key.is_empty()
-            && let Ok(k) = GetDlgItem(Some(win), ID_KEY)
-        {
-            let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(k));
-        }
     }
 }
 
@@ -277,6 +287,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         let _ = DestroyWindow(hwnd);
                     }
                     _ => {}
+                }
+                LRESULT(0)
+            }
+            // A plain window does not restore keyboard focus like a dialog does
+            // (after a message box or Alt+Tab), so remember and restore it here.
+            WM_ACTIVATE => {
+                if (wp.0 & 0xFFFF) as u32 == WA_INACTIVE {
+                    LAST_FOCUS.with(|f| f.set(GetFocus()));
+                } else {
+                    let last = LAST_FOCUS.with(|f| f.get());
+                    let target = if IsChild(hwnd, last).as_bool() {
+                        last
+                    } else {
+                        GetDlgItem(Some(hwnd), ID_KEY).unwrap_or_default()
+                    };
+                    let _ = SetFocus(Some(target));
                 }
                 LRESULT(0)
             }
