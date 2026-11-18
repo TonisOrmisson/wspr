@@ -47,19 +47,17 @@ pub fn wav(samples: &[i16], rate: u32) -> Vec<u8> {
     v
 }
 
-/// A short sine beep as WAV bytes.
-pub fn beep(freq: f32, ms: u32) -> Vec<u8> {
-    let rate = 22_050u32;
+/// A short sine beep at `rate` Hz, mono f32.
+pub fn tone(freq: f32, ms: u32, rate: u32) -> Vec<f32> {
     let n = rate * ms / 1000;
-    let samples: Vec<i16> = (0..n)
+    (0..n)
         .map(|i| {
             let t = i as f32 / rate as f32;
             // 5 ms fade in and out, otherwise the speaker clicks.
             let fade = (i.min(n - i) as f32 / (rate as f32 * 0.005)).min(1.0);
-            ((t * freq * std::f32::consts::TAU).sin() * fade * 0.3 * i16::MAX as f32) as i16
+            (t * freq * std::f32::consts::TAU).sin() * fade * 0.3
         })
-        .collect();
-    wav(&samples, rate)
+        .collect()
 }
 
 #[cfg(test)]
@@ -88,6 +86,8 @@ mod tests {
         assert_eq!(&w[0..4], b"RIFF");
         assert_eq!(u32::from_le_bytes(w[4..8].try_into().unwrap()), 36 + 6);
         assert_eq!(u32::from_le_bytes(w[40..44].try_into().unwrap()), 6);
-        assert_eq!(beep(880.0, 80).len(), 44 + 2 * 1764);
+        let t = tone(880.0, 100, 48_000);
+        assert_eq!(t.len(), 4800);
+        assert!(t.iter().all(|s| s.abs() <= 0.3));
     }
 }

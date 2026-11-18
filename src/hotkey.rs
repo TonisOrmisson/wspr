@@ -73,16 +73,6 @@ fn vk(k: &str) -> Option<u32> {
         .map(|n| 0x6F + n)
 }
 
-/// Text form of a hotkey, or None for a key this app has no name for.
-pub fn format(mods: u32, vk: u32) -> Option<String> {
-    let key = match vk {
-        0x30..=0x39 | 0x41..=0x5A => char::from_u32(vk)?.to_string(),
-        0x70..=0x87 => format!("F{}", vk - 0x6F),
-        _ => NAMED.iter().find(|(_, v)| *v == vk)?.0.to_string(),
-    };
-    Some(modifier_prefix(mods) + &key)
-}
-
 /// "Ctrl+Shift+" for the held modifiers, shown while the user is still pressing them.
 pub fn modifier_prefix(mods: u32) -> String {
     [
@@ -95,6 +85,37 @@ pub fn modifier_prefix(mods: u32) -> String {
     .filter(|(flag, _)| mods & flag != 0)
     .map(|(_, name)| *name)
     .collect()
+}
+
+/// The hotkey in the accelerator syntax of the `global-hotkey` crate, e.g. "ctrl+shift+Space".
+pub fn to_accelerator(s: &str) -> Result<String, String> {
+    let (mods, vk) = parse(s)?;
+    let key = match vk {
+        0x30..=0x39 => format!("Digit{}", vk - 0x30),
+        0x41..=0x5A => format!("Key{}", char::from_u32(vk).unwrap_or('A')),
+        0x60..=0x69 => format!("Numpad{}", vk - 0x60),
+        0x70..=0x87 => format!("F{}", vk - 0x6F),
+        0x25 => "ArrowLeft".into(),
+        0x26 => "ArrowUp".into(),
+        0x27 => "ArrowRight".into(),
+        0x28 => "ArrowDown".into(),
+        _ => NAMED
+            .iter()
+            .find(|(_, v)| *v == vk)
+            .map(|(n, _)| n.to_string())
+            .ok_or_else(|| format!("Unsupported key in {s}"))?,
+    };
+    let prefix: String = [
+        (MOD_CONTROL, "ctrl+"),
+        (MOD_ALT, "alt+"),
+        (MOD_SHIFT, "shift+"),
+        (MOD_WIN, "super+"),
+    ]
+    .iter()
+    .filter(|(flag, _)| mods & flag != 0)
+    .map(|(_, name)| *name)
+    .collect();
+    Ok(prefix + &key)
 }
 
 #[cfg(test)]
@@ -125,18 +146,17 @@ mod tests {
     }
 
     #[test]
-    fn format_roundtrips_with_parse() {
-        for s in [
-            "Ctrl+Shift+Space",
-            "Alt+D",
-            "F9",
-            "Ctrl+Alt+Num5",
-            "Shift+Delete",
-            "Ctrl+7",
-        ] {
-            let (m, k) = parse(s).unwrap();
-            assert_eq!(format(m, k).as_deref(), Some(s));
-        }
-        assert_eq!(format(MOD_CONTROL, 0xBA), None); // OEM key without a name
+    fn accelerator_syntax() {
+        assert_eq!(
+            to_accelerator("Ctrl+Shift+Space").unwrap(),
+            "ctrl+shift+Space"
+        );
+        assert_eq!(to_accelerator("Alt+D").unwrap(), "alt+KeyD");
+        assert_eq!(to_accelerator("F9").unwrap(), "F9");
+        assert_eq!(to_accelerator("Win+Left").unwrap(), "super+ArrowLeft");
+        assert_eq!(to_accelerator("Ctrl+7").unwrap(), "ctrl+Digit7");
+        assert_eq!(to_accelerator("Ctrl+Num5").unwrap(), "ctrl+Numpad5");
+        assert_eq!(to_accelerator("Ctrl+PageDown").unwrap(), "ctrl+PageDown");
+        assert!(to_accelerator("D").is_err());
     }
 }

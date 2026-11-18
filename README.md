@@ -4,7 +4,7 @@ Minimal dictation for Windows 10 and 11. Press a hotkey, speak, press it again: 
 transcribed by OpenAI or by any speech-to-text model on OpenRouter, and the text is pasted where
 your cursor is.
 
-No account, no telemetry, one ~2 MB `.exe`. You bring your own API key.
+No account, no telemetry, one ~8 MB `.exe`. You bring your own API key.
 
 ## Features
 

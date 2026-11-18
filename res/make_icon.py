@@ -20,3 +20,8 @@ sizes = [16, 24, 32, 48, 64, 128, 256]
 big = draw(256)
 big.save(sys.argv[1], sizes=[(n, n) for n in sizes], append_images=[draw(n) for n in sizes[:-1]])
 big.save(sys.argv[1].replace(".ico", ".png"))
+# Raw RGBA for the tray and window icons, so the app needs no image decoder.
+import os
+out = os.path.dirname(sys.argv[1])
+for n in (32, 64):
+    open(os.path.join(out, f"icon-{n}.rgba"), "wb").write(draw(n).tobytes())
