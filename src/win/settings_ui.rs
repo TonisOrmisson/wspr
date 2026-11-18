@@ -64,7 +64,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
         let Ok(win) = CreateWindowExW(
             WS_EX_DLGMODALFRAME,
             w!("wsprSettings"),
-            w!("wspr settings"),
+            PCWSTR(wide(concat!("wspr ", env!("CARGO_PKG_VERSION"), " settings")).as_ptr()),
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             x,
             y,

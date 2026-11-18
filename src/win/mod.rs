@@ -202,7 +202,10 @@ fn tray(op: NOTIFY_ICON_MESSAGE, icon: Option<usize>) {
         (
             a.hwnd,
             a.icons[a.icon],
-            format!("wspr: {} starts and stops dictation", a.settings.hotkey),
+            format!(
+                "wspr {VERSION}: {} starts and stops dictation",
+                a.settings.hotkey
+            ),
         )
     });
     let mut nid = NOTIFYICONDATAW {
