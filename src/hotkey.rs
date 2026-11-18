@@ -1,16 +1,9 @@
-//! Hotkeys as text ("Ctrl+Shift+Space") <-> Win32 RegisterHotKey modifiers and virtual key,
-//! plus conversion to and from the Windows hotkey control's format.
+//! Hotkeys as text ("Ctrl+Shift+Space") <-> Win32 RegisterHotKey modifiers and virtual key.
 
 pub const MOD_ALT: u32 = 0x1;
 pub const MOD_CONTROL: u32 = 0x2;
 pub const MOD_SHIFT: u32 = 0x4;
 pub const MOD_WIN: u32 = 0x8;
-
-// Hotkey control (msctls_hotkey32) modifier flags.
-const HOTKEYF_SHIFT: u32 = 0x1;
-const HOTKEYF_CONTROL: u32 = 0x2;
-const HOTKEYF_ALT: u32 = 0x4;
-const HOTKEYF_EXT: u32 = 0x8;
 
 /// Named keys besides A-Z, 0-9 and F1-F24.
 const NAMED: &[(&str, u32)] = &[
@@ -87,54 +80,21 @@ pub fn format(mods: u32, vk: u32) -> Option<String> {
         0x70..=0x87 => format!("F{}", vk - 0x6F),
         _ => NAMED.iter().find(|(_, v)| *v == vk)?.0.to_string(),
     };
-    let mut parts = Vec::new();
-    for (flag, name) in [
-        (MOD_CONTROL, "Ctrl"),
-        (MOD_ALT, "Alt"),
-        (MOD_SHIFT, "Shift"),
-        (MOD_WIN, "Win"),
-    ] {
-        if mods & flag != 0 {
-            parts.push(name.to_string());
-        }
-    }
-    parts.push(key);
-    Some(parts.join("+"))
+    Some(modifier_prefix(mods) + &key)
 }
 
-/// Hotkey control value (HKM_GETHOTKEY) -> (modifiers, virtual key).
-pub fn from_control(word: u32) -> (u32, u32) {
-    let flags = (word >> 8) & 0xFF;
-    let mut mods = 0;
-    for (f, m) in [
-        (HOTKEYF_SHIFT, MOD_SHIFT),
-        (HOTKEYF_CONTROL, MOD_CONTROL),
-        (HOTKEYF_ALT, MOD_ALT),
-    ] {
-        if flags & f != 0 {
-            mods |= m;
-        }
-    }
-    (mods, word & 0xFF)
-}
-
-/// (modifiers, virtual key) -> hotkey control value (HKM_SETHOTKEY). The control cannot show Win.
-pub fn to_control(mods: u32, vk: u32) -> u32 {
-    let mut flags = 0;
-    for (m, f) in [
-        (MOD_SHIFT, HOTKEYF_SHIFT),
-        (MOD_CONTROL, HOTKEYF_CONTROL),
-        (MOD_ALT, HOTKEYF_ALT),
-    ] {
-        if mods & m != 0 {
-            flags |= f;
-        }
-    }
-    // Navigation keys are "extended"; without the flag the control names them as numpad keys.
-    if (0x21..=0x2E).contains(&vk) {
-        flags |= HOTKEYF_EXT;
-    }
-    (flags << 8) | vk
+/// "Ctrl+Shift+" for the held modifiers, shown while the user is still pressing them.
+pub fn modifier_prefix(mods: u32) -> String {
+    [
+        (MOD_CONTROL, "Ctrl+"),
+        (MOD_ALT, "Alt+"),
+        (MOD_SHIFT, "Shift+"),
+        (MOD_WIN, "Win+"),
+    ]
+    .iter()
+    .filter(|(flag, _)| mods & flag != 0)
+    .map(|(_, name)| *name)
+    .collect()
 }
 
 #[cfg(test)]
@@ -178,13 +138,5 @@ mod tests {
             assert_eq!(format(m, k).as_deref(), Some(s));
         }
         assert_eq!(format(MOD_CONTROL, 0xBA), None); // OEM key without a name
-    }
-
-    #[test]
-    fn hotkey_control_conversion() {
-        let (m, k) = parse("Ctrl+Shift+Space").unwrap();
-        assert_eq!(to_control(m, k), 0x0320);
-        assert_eq!(from_control(0x0320), (m, k));
-        assert_eq!(from_control(to_control(MOD_ALT, 0x2E)), (MOD_ALT, 0x2E)); // EXT flag dropped
     }
 }

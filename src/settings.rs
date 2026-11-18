@@ -11,8 +11,8 @@ pub struct Settings {
     /// Comma-separated ISO-639-1 codes, e.g. "et" or "et,en".
     pub languages: String,
     pub hotkey: String,
-    /// Optional vocabulary hint (names, terms) sent as the API `prompt`.
-    pub prompt: String,
+    /// How many transcriptions to keep; 0 keeps none.
+    pub history_size: usize,
 }
 
 impl Default for Settings {
@@ -22,7 +22,7 @@ impl Default for Settings {
             model: "gpt-transcribe".into(),
             languages: "et".into(),
             hotkey: "Ctrl+Shift+Space".into(),
-            prompt: String::new(),
+            history_size: 50,
         }
     }
 }
@@ -87,6 +87,15 @@ pub fn language_index(code: &str) -> Option<usize> {
     let code = code.trim().to_ascii_lowercase();
     LANGUAGES.iter().position(|l| l.1 == code)
 }
+
+/// History sizes offered in Settings: (label, count).
+pub const HISTORY_SIZES: &[(&str, usize)] = &[
+    ("Off (keep nothing)", 0),
+    ("Last 10", 10),
+    ("Last 50", 50),
+    ("Last 100", 100),
+    ("Last 500", 500),
+];
 
 /// "sk-proj-…wxyz": enough to recognise which key it is without showing the secret part.
 pub fn key_hint(key: &str) -> String {
@@ -157,5 +166,9 @@ mod tests {
         let partial: Settings = serde_json::from_str(r#"{"model":"whisper-1"}"#).unwrap();
         assert_eq!(partial.model, "whisper-1");
         assert_eq!(partial.languages, "et");
+        assert_eq!(partial.history_size, 50);
+        // Files from older versions still load; the removed `prompt` field is ignored.
+        let old: Settings = serde_json::from_str(r#"{"prompt":"x","hotkey":"F9"}"#).unwrap();
+        assert_eq!(old.hotkey, "F9");
     }
 }

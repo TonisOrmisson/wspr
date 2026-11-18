@@ -13,10 +13,11 @@ The UI is in Estonian, because that is what its author uses.
 - Short beeps when recording starts and stops.
 - A small on-screen pill shows the state: recording (with a timer), transcribing, done, error.
   It never takes focus, so the paste goes to the window you were typing in.
-- Tray menu with the last 10 transcriptions (click copies to the clipboard) and the full history
-  of the last 50. Useful when the text was pasted into the wrong place.
+- History of the last transcriptions (10 to 500, or off), viewable from Settings. Useful when the
+  text was pasted into the wrong place.
 - If the API request fails, the recording is kept and can be retried from the tray menu.
-- Settings window: OpenAI API key, model, input language, hotkey, optional vocabulary hint.
+- Settings window: OpenAI API key, model, input language, hotkey (press it to record it),
+  history size.
 - Your clipboard text is restored after pasting.
 - Updates itself: checks GitHub Releases at start and every hour (or from the tray menu),
   verifies the download's SHA-256 and installs it silently. It never interrupts a dictation.

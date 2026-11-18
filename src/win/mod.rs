@@ -41,11 +41,9 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_SECONDS: f32 = 600.0; // keeps the WAV under the API's 25 MB limit
 const MIN_SECONDS: f32 = 0.3;
 const ID_RETRY: usize = 10;
-const ID_OPEN_HISTORY: usize = 11;
 const ID_SETTINGS: usize = 12;
 const ID_QUIT: usize = 13;
 const ID_CHECK_UPDATE: usize = 14;
-const ID_HISTORY: usize = 1000;
 const ICON_IDLE: usize = 0;
 const ICON_REC: usize = 1;
 const ICON_BUSY: usize = 2;
@@ -269,11 +267,26 @@ pub(crate) fn apply_settings(mut new: Settings, api_key: String) -> Result<(), S
     new.save(&settings_path())
         .map_err(|e| format!("Could not save settings: {e}"))?;
     with(|a| {
+        a.history.truncate(new.history_size);
         a.settings = new;
         a.api_key = key;
     });
+    trim_history()?;
     tray(NIM_MODIFY, None);
     register_hotkey()
+}
+
+/// Applies a smaller history size to the files; "Off" deletes them.
+fn trim_history() -> Result<(), String> {
+    let (list, size) = with(|a| (a.history.clone(), a.settings.history_size));
+    let txt = data_dir().join("history.txt");
+    if size == 0 {
+        let _ = std::fs::remove_file(history_path());
+        let _ = std::fs::remove_file(txt);
+        return Ok(());
+    }
+    let _ = std::fs::remove_file(txt); // regenerated on the next "View history"
+    history::save(&history_path(), &list).map_err(|e| format!("Could not save the history: {e}"))
 }
 
 pub(crate) fn suspend_hotkey() {
@@ -383,7 +396,7 @@ fn stop() {
 }
 
 fn transcribe(wav: Vec<u8>) {
-    let (hwnd, key, model, langs, prompt) = with(|a| {
+    let (hwnd, key, model, langs) = with(|a| {
         a.state = State::Transcribing;
         let s = &a.settings;
         (
@@ -391,13 +404,12 @@ fn transcribe(wav: Vec<u8>) {
             a.api_key.clone(),
             s.model.clone(),
             s.language_list(),
-            s.prompt.clone(),
         )
     });
     tray(NIM_MODIFY, Some(ICON_BUSY));
     show(View::Transcribing, 0);
     std::thread::spawn(move || {
-        let result = openai::transcribe(&key, &model, &langs, &prompt, &wav);
+        let result = openai::transcribe(&key, &model, &langs, &wav);
         let p = Box::into_raw(Box::new((result, wav)));
         unsafe {
             if PostMessageW(
@@ -422,17 +434,18 @@ fn on_result(result: Result<String, String>, wav: Vec<u8>) {
         Ok(text) => {
             let _ = std::fs::remove_file(failed_path());
             let saved = with(|a| {
-                history::push(
-                    &mut a.history,
-                    Entry {
-                        time: sys::now(),
-                        text: text.clone(),
-                    },
-                );
+                if a.settings.history_size == 0 {
+                    return Ok(());
+                }
+                let entry = Entry {
+                    time: sys::now(),
+                    text: text.clone(),
+                };
+                history::push(&mut a.history, entry, a.settings.history_size);
                 history::save(&history_path(), &a.history)
             });
             match (paste(&text), saved) {
-                (Err(e), _) => fail(format!("{e}. The text is in the history.")),
+                (Err(e), _) => fail(e),
                 (Ok(false), Err(e)) => fail(format!(
                     "Could not paste or save the history ({e}). The text is on the clipboard"
                 )),
@@ -496,33 +509,14 @@ fn tick() {
 }
 
 fn menu() {
-    let (hwnd, labels) = with(|a| {
-        (
-            a.hwnd,
-            a.history
-                .iter()
-                .take(history::IN_MENU)
-                .map(history::menu_label)
-                .collect::<Vec<_>>(),
-        )
-    });
+    let hwnd = with(|a| a.hwnd);
     let has_failed = failed_path().exists();
     let cmd = unsafe {
         let Ok(m) = CreatePopupMenu() else { return };
-        if labels.is_empty() {
-            let _ = AppendMenuW(m, MF_STRING | MF_GRAYED, 0, w!("No history yet"));
-        } else {
-            let _ = AppendMenuW(m, MF_STRING | MF_GRAYED, 0, w!("Recent (click to copy):"));
-            for (i, l) in labels.iter().enumerate() {
-                let wl = sys::wide(l);
-                let _ = AppendMenuW(m, MF_STRING, ID_HISTORY + i, PCWSTR(wl.as_ptr()));
-            }
-        }
-        let _ = AppendMenuW(m, MF_SEPARATOR, 0, None);
         if has_failed {
             let _ = AppendMenuW(m, MF_STRING, ID_RETRY, w!("Retry failed recording"));
+            let _ = AppendMenuW(m, MF_SEPARATOR, 0, None);
         }
-        let _ = AppendMenuW(m, MF_STRING, ID_OPEN_HISTORY, w!("Open full history"));
         let _ = AppendMenuW(m, MF_STRING, ID_CHECK_UPDATE, w!("Check for updates"));
         let _ = AppendMenuW(m, MF_STRING, ID_SETTINGS, w!("Settings…"));
         let _ = AppendMenuW(m, MF_SEPARATOR, 0, None);
@@ -547,22 +541,10 @@ fn menu() {
     };
     match cmd {
         ID_RETRY => retry(),
-        ID_OPEN_HISTORY => open_history(),
         ID_SETTINGS => open_settings(),
         ID_QUIT => quit(),
         ID_CHECK_UPDATE => check_update(true),
-        c if c >= ID_HISTORY => copy_history(c - ID_HISTORY),
         _ => {}
-    }
-}
-
-fn copy_history(i: usize) {
-    let Some(text) = with(|a| a.history.get(i).map(|e| e.text.clone())) else {
-        return;
-    };
-    match sys::set_text(&text) {
-        Ok(()) => show(View::Info("Copied to clipboard".into()), 1500),
-        Err(e) => fail(e),
     }
 }
 
@@ -579,8 +561,12 @@ fn retry() {
     }
 }
 
-fn open_history() {
+/// Opens the history as a text file (from the Settings window).
+pub(crate) fn open_history() {
     let text = with(|a| history::to_text(&a.history));
+    if text.is_empty() {
+        return message("No transcriptions in the history.");
+    }
     let path = data_dir().join("history.txt");
     if let Err(e) = std::fs::write(&path, text) {
         return fail(format!("Could not write the history file: {e}"));

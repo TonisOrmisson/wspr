@@ -12,7 +12,7 @@ pub const MODELS: &[&str] = &[
 const BOUNDARY: &str = "wsprBoundary7MA4YWxkTrZu0gW";
 
 /// gpt-transcribe takes a `languages[]` list; older models take one `language`. Never send both.
-pub fn multipart(model: &str, languages: &[String], prompt: &str, wav: &[u8]) -> (String, Vec<u8>) {
+pub fn multipart(model: &str, languages: &[String], wav: &[u8]) -> (String, Vec<u8>) {
     let mut body = Vec::with_capacity(wav.len() + 1024);
     let mut field = |name: &str, value: &str| {
         body.extend_from_slice(
@@ -30,9 +30,6 @@ pub fn multipart(model: &str, languages: &[String], prompt: &str, wav: &[u8]) ->
         }
     } else if let Some(l) = languages.first() {
         field("language", l);
-    }
-    if !prompt.trim().is_empty() {
-        field("prompt", prompt.trim());
     }
     body.extend_from_slice(
         format!(
@@ -70,11 +67,10 @@ pub fn transcribe(
     api_key: &str,
     model: &str,
     languages: &[String],
-    prompt: &str,
     wav: &[u8],
 ) -> Result<String, String> {
     use std::time::Duration;
-    let (content_type, body) = multipart(model, languages, prompt, wav);
+    let (content_type, body) = multipart(model, languages, wav);
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(Duration::from_secs(180)))
@@ -98,27 +94,25 @@ pub fn transcribe(
 mod tests {
     use super::*;
 
-    fn body_str(model: &str, langs: &[&str], prompt: &str) -> String {
+    fn body_str(model: &str, langs: &[&str]) -> String {
         let langs: Vec<String> = langs.iter().map(|s| s.to_string()).collect();
-        String::from_utf8(multipart(model, &langs, prompt, b"WAVDATA").1).unwrap()
+        String::from_utf8(multipart(model, &langs, b"WAVDATA").1).unwrap()
     }
 
     #[test]
     fn gpt_transcribe_uses_languages_list() {
-        let b = body_str("gpt-transcribe", &["et", "en"], "");
+        let b = body_str("gpt-transcribe", &["et", "en"]);
         assert!(b.contains("name=\"languages[]\"\r\n\r\net\r\n"));
         assert!(b.contains("name=\"languages[]\"\r\n\r\nen\r\n"));
         assert!(!b.contains("name=\"language\""));
-        assert!(!b.contains("name=\"prompt\""));
         assert!(b.ends_with("WAVDATA\r\n--wsprBoundary7MA4YWxkTrZu0gW--\r\n"));
     }
 
     #[test]
-    fn older_models_use_single_language_and_prompt() {
-        let b = body_str("whisper-1", &["et", "en"], " Tõnis ");
+    fn older_models_use_single_language() {
+        let b = body_str("whisper-1", &["et", "en"]);
         assert!(b.contains("name=\"language\"\r\n\r\net\r\n"));
         assert!(!b.contains("languages[]"));
-        assert!(b.contains("name=\"prompt\"\r\n\r\nTõnis\r\n"));
     }
 
     #[test]

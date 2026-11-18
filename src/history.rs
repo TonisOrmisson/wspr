@@ -3,19 +3,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub const KEEP: usize = 50;
-pub const IN_MENU: usize = 10;
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Entry {
     pub time: String,
     pub text: String,
 }
 
-/// Newest first, at most KEEP entries.
-pub fn push(list: &mut Vec<Entry>, e: Entry) {
+/// Newest first, at most `keep` entries.
+pub fn push(list: &mut Vec<Entry>, e: Entry, keep: usize) {
     list.insert(0, e);
-    list.truncate(KEEP);
+    list.truncate(keep);
 }
 
 pub fn load(path: &Path) -> Vec<Entry> {
@@ -43,20 +40,6 @@ pub fn to_text(list: &[Entry]) -> String {
         .join("\r\n")
 }
 
-/// Menu item text: time plus the start of the text. `&` would become a mnemonic, so it is doubled.
-pub fn menu_label(e: &Entry) -> String {
-    let short: String = e.text.chars().take(60).collect();
-    let more = if e.text.chars().count() > 60 {
-        "…"
-    } else {
-        ""
-    };
-    let time = e.time.get(11..).unwrap_or(&e.time);
-    format!("{time}   {short}{more}")
-        .replace('\n', " ")
-        .replace('&', "&&")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,18 +54,13 @@ mod tests {
     #[test]
     fn push_keeps_newest_first_and_caps() {
         let mut l = Vec::new();
-        for i in 0..KEEP + 5 {
-            push(&mut l, e(&i.to_string()));
+        for i in 0..15 {
+            push(&mut l, e(&i.to_string()), 10);
         }
-        assert_eq!(l.len(), KEEP);
-        assert_eq!(l[0].text, (KEEP + 4).to_string());
-    }
-
-    #[test]
-    fn menu_label_is_short_and_escaped() {
-        assert_eq!(menu_label(&e("Tom & Jerry")), "14:03   Tom && Jerry");
-        let long = "ä".repeat(100);
-        assert_eq!(menu_label(&e(&long)).chars().count(), 8 + 60 + 1);
+        assert_eq!(l.len(), 10);
+        assert_eq!(l[0].text, "14");
+        push(&mut l, e("x"), 0);
+        assert!(l.is_empty());
     }
 
     #[test]
