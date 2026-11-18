@@ -147,7 +147,8 @@ impl App {
         let keys = [0, 1].map(|p| platform::decrypt_key(settings.key_enc_of(p)));
         let icon = |rgba: Vec<u8>| Icon::from_rgba(rgba, 32, 32).ok();
         let tray_icons = [
-            icon(include_bytes!("../res/icon-32.rgba").to_vec()),
+            icon(include_bytes!("../res/icon-32.rgba").to_vec())
+                .or_else(|| icon(circle_rgba([110, 130, 160]))),
             icon(circle_rgba([230, 60, 60])),
             icon(circle_rgba([230, 160, 20])),
         ];
