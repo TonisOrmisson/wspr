@@ -8,7 +8,8 @@ use std::cell::{Cell, RefCell};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetFocus, GetKeyState, SetFocus, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_TAB,
+    GetFocus, GetKeyState, SetFocus, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN,
+    VK_SHIFT, VK_TAB,
 };
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -425,10 +426,14 @@ unsafe extern "system" fn hotkey_field_proc(
 ) -> LRESULT {
     unsafe {
         match msg {
-            // Take every key, Space and Alt combinations included; only Tab still moves focus.
+            // Take every key, Space and Alt combinations included. Plain Tab, Enter and Esc
+            // (never valid hotkeys) still move focus, save and close the window.
             WM_GETDLGCODE => {
                 let m = lp.0 as *const MSG;
-                if !m.is_null() && (*m).wParam.0 == VK_TAB.0 as usize && held_modifiers() == 0 {
+                let dialog_key = [VK_TAB.0, VK_RETURN.0, VK_ESCAPE.0]
+                    .map(|k| k as usize)
+                    .contains(&(if m.is_null() { 0 } else { (*m).wParam.0 }));
+                if dialog_key && held_modifiers() == 0 {
                     return DefSubclassProc(h, msg, wp, lp);
                 }
                 LRESULT(DLGC_WANTALLKEYS as isize)
