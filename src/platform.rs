@@ -124,9 +124,15 @@ pub fn single_instance() -> Option<impl Sized> {
 #[cfg(target_os = "linux")]
 pub fn single_instance() -> Option<impl Sized> {
     let file = std::fs::File::create(data_dir().join("wspr.lock")).ok()?;
-    // The lock is released when the process ends, also after a crash.
-    file.try_lock().ok()?;
-    Some(file)
+    // The lock is released when the process ends, also after a crash. After an update the old
+    // process may still be quitting, so wait for it a few seconds before giving up.
+    for _ in 0..50 {
+        if file.try_lock().is_ok() {
+            return Some(file);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    None
 }
 
 // ---------- installing and updating ----------
