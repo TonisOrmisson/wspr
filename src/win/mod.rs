@@ -276,7 +276,24 @@ pub(crate) fn apply_settings(mut new: Settings, api_key: String) -> Result<(), S
     register_hotkey()
 }
 
+pub(crate) fn suspend_hotkey() {
+    let hwnd = with(|a| a.hwnd);
+    unsafe {
+        let _ = UnregisterHotKey(Some(hwnd), HOTKEY_ID);
+    }
+}
+
+pub(crate) fn resume_hotkey() {
+    if let Err(e) = register_hotkey() {
+        fail(e);
+    }
+}
+
 fn open_settings() {
+    // The hotkey is off while settings are open, so a running recording could not be stopped.
+    if with(|a| matches!(a.state, State::Recording(_))) {
+        stop();
+    }
     let (hinst, s, key, scale) =
         with(|a| (a.hinst, a.settings.clone(), a.api_key.clone(), a.scale));
     settings_ui::open(hinst, &s, &key, scale);

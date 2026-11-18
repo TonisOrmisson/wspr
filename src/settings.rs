@@ -88,6 +88,20 @@ pub fn language_index(code: &str) -> Option<usize> {
     LANGUAGES.iter().position(|l| l.1 == code)
 }
 
+/// "sk-proj-…wxyz": enough to recognise which key it is without showing the secret part.
+pub fn key_hint(key: &str) -> String {
+    let k: Vec<char> = key.trim().chars().collect();
+    match k.len() {
+        0 => "No key entered".into(),
+        n if n < 16 => format!("{n} characters"),
+        n => format!(
+            "{}…{}",
+            k[..8].iter().collect::<String>(),
+            k[n - 4..].iter().collect::<String>()
+        ),
+    }
+}
+
 pub fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -105,6 +119,16 @@ pub fn from_hex(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_hint_shows_only_ends() {
+        assert_eq!(key_hint(""), "No key entered");
+        assert_eq!(key_hint("short"), "5 characters");
+        assert_eq!(
+            key_hint(" sk-proj-SECRETSECRETSECRETwxyz "),
+            "sk-proj-…wxyz"
+        );
+    }
 
     #[test]
     fn hex_roundtrip() {

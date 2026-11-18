@@ -1,11 +1,13 @@
 //! Small settings window: API key, model, languages, hotkey, vocabulary hint.
 
 use super::sys::wide;
+use crate::hotkey;
 use crate::openai::MODELS;
-use crate::settings::{LANGUAGES, Settings, language_index};
+use crate::settings::{LANGUAGES, Settings, key_hint, language_index};
 use std::cell::Cell;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::UI::Controls::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{PCWSTR, w};
@@ -15,6 +17,7 @@ const ID_MODEL: i32 = 102;
 const ID_LANG: i32 = 103;
 const ID_HOTKEY: i32 = 104;
 const ID_PROMPT: i32 = 105;
+const ID_KEY_HINT: i32 = 106;
 
 thread_local! {
     static WINDOW: Cell<Option<HWND>> = const { Cell::new(None) };
@@ -44,13 +47,18 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
             ..Default::default()
         };
         RegisterClassW(&wc); // fails harmlessly when already registered
+        let icc = INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_HOTKEY_CLASS,
+        };
+        let _ = InitCommonControlsEx(&icc);
 
         // Size the client area; the frame and title bar come on top of it.
         let mut rc = RECT {
             left: 0,
             top: 0,
             right: px(510.0),
-            bottom: px(306.0),
+            bottom: px(342.0),
         };
         let _ = AdjustWindowRectEx(
             &mut rc,
@@ -144,11 +152,17 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
                 &s.languages,
                 WS_TABSTOP.0 | WS_VSCROLL.0 | CBS_DROPDOWNLIST as u32,
             ),
-            ("Hotkey", ID_HOTKEY, &s.hotkey, edit),
+            (
+                "Hotkey (click, then press keys)",
+                ID_HOTKEY,
+                &s.hotkey,
+                WS_TABSTOP.0,
+            ),
             ("Vocabulary hint (optional)", ID_PROMPT, &s.prompt, edit),
         ];
         for (i, (label, id, value, style)) in rows.iter().enumerate() {
-            let y = 18.0 + i as f32 * 38.0;
+            // The rows below the key leave room for the key hint line.
+            let y = 18.0 + i as f32 * 38.0 + if i > 0 { 18.0 } else { 0.0 };
             child(
                 w!("STATIC"),
                 label,
@@ -160,7 +174,50 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
                 22.0,
                 0,
             );
-            if *id == ID_LANG {
+            if *id == ID_KEY {
+                child(
+                    w!("EDIT"),
+                    value,
+                    *style,
+                    WS_EX_CLIENTEDGE,
+                    210.0,
+                    y,
+                    280.0,
+                    26.0,
+                    *id,
+                );
+                child(
+                    w!("STATIC"),
+                    &format!("Key: {}", key_hint(value)),
+                    0,
+                    WINDOW_EX_STYLE(0),
+                    212.0,
+                    y + 30.0,
+                    278.0,
+                    20.0,
+                    ID_KEY_HINT,
+                );
+            } else if *id == ID_HOTKEY {
+                let hk = child(
+                    HOTKEY_CLASSW,
+                    "",
+                    *style,
+                    WS_EX_CLIENTEDGE,
+                    210.0,
+                    y,
+                    280.0,
+                    26.0,
+                    *id,
+                );
+                if let Ok((m, k)) = hotkey::parse(value) {
+                    SendMessageW(
+                        hk,
+                        HKM_SETHOTKEY,
+                        Some(WPARAM(hotkey::to_control(m, k) as usize)),
+                        None,
+                    );
+                }
+            } else if *id == ID_LANG {
                 let combo = child(
                     w!("COMBOBOX"),
                     "",
@@ -227,14 +284,14 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
         }
         child(
             w!("STATIC"),
-            "Hotkey examples: Ctrl+Shift+Space, Alt+D, F9. Press once to start, again to stop.\n\
+            "The hotkey is off while this window is open. Press it once to start dictation, again to stop.\n\
              OpenAI shuts down all models except gpt-transcribe on 2027-02-26.",
             0,
             WINDOW_EX_STYLE(0),
             16.0,
-            210.0,
+            228.0,
             480.0,
-            44.0,
+            64.0,
             0,
         );
         child(
@@ -243,7 +300,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
             WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
             WINDOW_EX_STYLE(0),
             290.0,
-            262.0,
+            298.0,
             96.0,
             30.0,
             IDOK.0,
@@ -254,12 +311,14 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
             WS_TABSTOP.0,
             WINDOW_EX_STYLE(0),
             394.0,
-            262.0,
+            298.0,
             96.0,
             30.0,
             IDCANCEL.0,
         );
 
+        // While the hotkey is being edited, pressing it must not start a dictation.
+        super::suspend_hotkey();
         let _ = ShowWindow(win, SW_SHOW);
         let _ = SetForegroundWindow(win);
     }
@@ -291,12 +350,26 @@ fn selected_language(win: HWND) -> String {
     }
 }
 
+fn captured_hotkey(win: HWND) -> Result<String, String> {
+    let word = unsafe {
+        GetDlgItem(Some(win), ID_HOTKEY)
+            .map(|c| SendMessageW(c, HKM_GETHOTKEY, None, None).0 as u32 & 0xFFFF)
+            .unwrap_or(0)
+    };
+    let (mods, vk) = hotkey::from_control(word);
+    if vk == 0 {
+        return Err("Click the Hotkey field and press the key combination you want".into());
+    }
+    hotkey::format(mods, vk)
+        .ok_or_else(|| "That key cannot be used as a hotkey, choose another".into())
+}
+
 fn save(win: HWND) -> Result<(), String> {
     let new = Settings {
         api_key_enc: String::new(), // filled in by apply_settings
         model: text_of(win, ID_MODEL),
         languages: selected_language(win),
-        hotkey: text_of(win, ID_HOTKEY),
+        hotkey: captured_hotkey(win)?,
         prompt: text_of(win, ID_PROMPT),
     };
     if new.model.is_empty() {
@@ -309,6 +382,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     unsafe {
         match msg {
             WM_COMMAND => {
+                // Typing a new key updates the "sk-proj-…wxyz" hint below the field.
+                if (wp.0 >> 16) as u32 == EN_CHANGE && (wp.0 & 0xFFFF) as i32 == ID_KEY {
+                    let hint = wide(&format!("Key: {}", key_hint(&text_of(hwnd, ID_KEY))));
+                    if let Ok(h) = GetDlgItem(Some(hwnd), ID_KEY_HINT) {
+                        let _ = SetWindowTextW(h, PCWSTR(hint.as_ptr()));
+                    }
+                    return LRESULT(0);
+                }
                 match (wp.0 & 0xFFFF) as i32 {
                     id if id == IDOK.0 => match save(hwnd) {
                         Ok(()) => {
@@ -357,6 +438,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_DESTROY => {
                 WINDOW.with(|c| c.set(None));
+                super::resume_hotkey();
                 let _ = DeleteObject(FONT.with(|f| f.replace(HFONT::default())).into());
                 LRESULT(0)
             }
