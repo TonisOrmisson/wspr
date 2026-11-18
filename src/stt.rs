@@ -1,17 +1,46 @@
-//! OpenAI /v1/audio/transcriptions request building and response parsing.
+//! Speech-to-text over OpenAI-style /audio/transcriptions endpoints (OpenAI, OpenRouter).
 
-/// Offered in the settings dropdown. The field is editable, so other model IDs work too.
-/// All but gpt-transcribe shut down on 2027-02-26.
-pub const MODELS: &[&str] = &[
-    "gpt-transcribe",
-    "gpt-4o-transcribe",
-    "gpt-4o-mini-transcribe",
-    "whisper-1",
+pub struct Provider {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub key_label: &'static str,
+    pub url: &'static str,
+    /// Offered in the model dropdown. The field is editable, so other model IDs work too.
+    pub models: &'static [&'static str],
+}
+
+/// Index 0 is the default. Settings store per-provider keys and models by this order.
+pub const PROVIDERS: &[Provider] = &[
+    Provider {
+        id: "openai",
+        label: "OpenAI",
+        key_label: "OpenAI API key",
+        url: "https://api.openai.com/v1/audio/transcriptions",
+        // All but gpt-transcribe shut down on 2027-02-26.
+        models: &[
+            "gpt-transcribe",
+            "gpt-4o-transcribe",
+            "gpt-4o-mini-transcribe",
+            "whisper-1",
+        ],
+    },
+    Provider {
+        id: "openrouter",
+        label: "OpenRouter (Microsoft MAI and more)",
+        key_label: "OpenRouter API key",
+        url: "https://openrouter.ai/api/v1/audio/transcriptions",
+        models: &["microsoft/mai-transcribe-2"],
+    },
 ];
+
+pub fn provider_index(id: &str) -> usize {
+    PROVIDERS.iter().position(|p| p.id == id).unwrap_or(0)
+}
 
 const BOUNDARY: &str = "wsprBoundary7MA4YWxkTrZu0gW";
 
-/// gpt-transcribe takes a `languages[]` list; older models take one `language`. Never send both.
+/// gpt-transcribe takes a `languages[]` list; other models (and OpenRouter) take one `language`.
+/// Never send both.
 pub fn multipart(model: &str, languages: &[String], wav: &[u8]) -> (String, Vec<u8>) {
     let mut body = Vec::with_capacity(wav.len() + 1024);
     let mut field = |name: &str, value: &str| {
@@ -64,6 +93,7 @@ pub fn parse_response(status: u16, body: &str) -> Result<String, String> {
 
 #[cfg(windows)]
 pub fn transcribe(
+    url: &str,
     api_key: &str,
     model: &str,
     languages: &[String],
@@ -77,7 +107,7 @@ pub fn transcribe(
         .build()
         .into();
     let mut resp = agent
-        .post("https://api.openai.com/v1/audio/transcriptions")
+        .post(url)
         .header("Authorization", &format!("Bearer {}", api_key.trim()))
         .header("Content-Type", &content_type)
         .send(&body[..])
@@ -113,6 +143,15 @@ mod tests {
         let b = body_str("whisper-1", &["et", "en"]);
         assert!(b.contains("name=\"language\"\r\n\r\net\r\n"));
         assert!(!b.contains("languages[]"));
+    }
+
+    #[test]
+    fn openrouter_model_uses_single_language() {
+        let b = body_str("microsoft/mai-transcribe-2", &["et"]);
+        assert!(b.contains("name=\"language\"\r\n\r\net\r\n"));
+        assert!(!b.contains("languages[]"));
+        assert_eq!(provider_index("openrouter"), 1);
+        assert_eq!(provider_index("unknown"), 0);
     }
 
     #[test]

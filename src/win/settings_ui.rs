@@ -1,9 +1,9 @@
-//! Small settings window: API key, model, language, hotkey, history size.
+//! Small settings window: provider, API key, model, language, hotkey, history size.
 
 use super::sys::wide;
 use crate::hotkey;
-use crate::openai::MODELS;
 use crate::settings::{HISTORY_SIZES, LANGUAGES, Settings, key_hint, language_index};
+use crate::stt::PROVIDERS;
 use std::cell::{Cell, RefCell};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -22,6 +22,8 @@ const ID_HOTKEY: i32 = 104;
 const ID_HISTORY: i32 = 105;
 const ID_KEY_HINT: i32 = 106;
 const ID_VIEW_HISTORY: i32 = 107;
+const ID_PROVIDER: i32 = 108;
+const ID_KEY_LABEL: i32 = 109;
 
 thread_local! {
     static WINDOW: Cell<Option<HWND>> = const { Cell::new(None) };
@@ -30,13 +32,16 @@ thread_local! {
     /// Last complete hotkey in the field; restored when only modifiers were pressed.
     static HOTKEY_TEXT: RefCell<String> = const { RefCell::new(String::new()) };
     static HISTORY_SIZE: Cell<usize> = const { Cell::new(0) };
+    /// (key, model) per provider while the window is open; the fields show the current one.
+    static PROVIDER_VALUES: RefCell<[(String, String); 2]> = RefCell::new(Default::default());
+    static CURRENT_PROVIDER: Cell<usize> = const { Cell::new(0) };
 }
 
 pub fn hwnd() -> Option<HWND> {
     WINDOW.with(|w| w.get())
 }
 
-pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
+pub fn open(hinst: HINSTANCE, s: &Settings, keys: &[String; 2], scale: f32) {
     if let Some(h) = hwnd() {
         unsafe {
             let _ = SetForegroundWindow(h);
@@ -60,7 +65,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
             left: 0,
             top: 0,
             right: px(510.0),
-            bottom: px(342.0),
+            bottom: px(380.0),
         };
         let _ = AdjustWindowRectEx(
             &mut rc,
@@ -140,12 +145,28 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
             c
         };
         let edit = WS_TABSTOP.0 | ES_AUTOHSCROLL as u32;
-        let rows: [(&str, i32, &str, u32); 5] = [
-            ("OpenAI API key", ID_KEY, api_key, edit | ES_PASSWORD as u32),
+        let cur = s.provider_index();
+        CURRENT_PROVIDER.with(|c| c.set(cur));
+        PROVIDER_VALUES.with(|v| {
+            *v.borrow_mut() = [0, 1].map(|p| (keys[p].clone(), s.model_of(p).to_string()));
+        });
+        let rows: [(&str, i32, &str, u32); 6] = [
+            (
+                "Provider",
+                ID_PROVIDER,
+                "",
+                WS_TABSTOP.0 | CBS_DROPDOWNLIST as u32,
+            ),
+            (
+                PROVIDERS[cur].key_label,
+                ID_KEY,
+                &keys[cur],
+                edit | ES_PASSWORD as u32,
+            ),
             (
                 "Model",
                 ID_MODEL,
-                &s.model,
+                s.model_of(cur),
                 WS_TABSTOP.0 | WS_VSCROLL.0 | CBS_DROPDOWN as u32,
             ),
             (
@@ -164,7 +185,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
         ];
         for (i, (label, id, value, style)) in rows.iter().enumerate() {
             // The rows below the key leave room for the key hint line.
-            let y = 18.0 + i as f32 * 38.0 + if i > 0 { 18.0 } else { 0.0 };
+            let y = 18.0 + i as f32 * 38.0 + if i > 1 { 18.0 } else { 0.0 };
             child(
                 w!("STATIC"),
                 label,
@@ -174,9 +195,31 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
                 y + 4.0,
                 190.0,
                 22.0,
-                0,
+                if *id == ID_KEY { ID_KEY_LABEL } else { 0 },
             );
-            if *id == ID_KEY {
+            if *id == ID_PROVIDER {
+                let combo = child(
+                    w!("COMBOBOX"),
+                    "",
+                    *style,
+                    WINDOW_EX_STYLE(0),
+                    210.0,
+                    y,
+                    280.0,
+                    200.0,
+                    *id,
+                );
+                for p in PROVIDERS {
+                    let wl = wide(p.label);
+                    SendMessageW(
+                        combo,
+                        CB_ADDSTRING,
+                        Some(WPARAM(0)),
+                        Some(LPARAM(wl.as_ptr() as isize)),
+                    );
+                }
+                SendMessageW(combo, CB_SETCURSEL, Some(WPARAM(cur)), None);
+            } else if *id == ID_KEY {
                 child(
                     w!("EDIT"),
                     value,
@@ -297,17 +340,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
                     200.0,
                     *id,
                 );
-                for m in MODELS {
-                    let wm = wide(m);
-                    SendMessageW(
-                        combo,
-                        CB_ADDSTRING,
-                        Some(WPARAM(0)),
-                        Some(LPARAM(wm.as_ptr() as isize)),
-                    );
-                }
-                let wv = wide(value);
-                let _ = SetWindowTextW(combo, PCWSTR(wv.as_ptr()));
+                fill_models(combo, cur, value);
             } else {
                 child(
                     w!("EDIT"),
@@ -329,7 +362,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
             0,
             WINDOW_EX_STYLE(0),
             16.0,
-            228.0,
+            266.0,
             480.0,
             64.0,
             0,
@@ -340,7 +373,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
             WS_TABSTOP.0 | BS_DEFPUSHBUTTON as u32,
             WINDOW_EX_STYLE(0),
             290.0,
-            298.0,
+            336.0,
             96.0,
             30.0,
             IDOK.0,
@@ -351,7 +384,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
             WS_TABSTOP.0,
             WINDOW_EX_STYLE(0),
             394.0,
-            298.0,
+            336.0,
             96.0,
             30.0,
             IDCANCEL.0,
@@ -477,18 +510,78 @@ fn selected_history_size(win: HWND) -> usize {
     }
 }
 
+fn fill_models(combo: HWND, provider: usize, value: &str) {
+    unsafe {
+        SendMessageW(combo, CB_RESETCONTENT, None, None);
+        for m in PROVIDERS[provider].models {
+            let wm = wide(m);
+            SendMessageW(
+                combo,
+                CB_ADDSTRING,
+                Some(WPARAM(0)),
+                Some(LPARAM(wm.as_ptr() as isize)),
+            );
+        }
+    }
+    set_text(combo, value);
+}
+
+/// Keeps what was typed for the old provider and shows the key and model of the new one.
+fn switch_provider(win: HWND) {
+    let new = unsafe {
+        GetDlgItem(Some(win), ID_PROVIDER)
+            .map(|c| SendMessageW(c, CB_GETCURSEL, None, None).0)
+            .unwrap_or(0)
+    };
+    let new = usize::try_from(new).unwrap_or(0).min(PROVIDERS.len() - 1);
+    let old = CURRENT_PROVIDER.with(|c| c.replace(new));
+    if new == old {
+        return;
+    }
+    let (key, model) = PROVIDER_VALUES.with(|v| {
+        let mut v = v.borrow_mut();
+        v[old] = (text_of(win, ID_KEY), text_of(win, ID_MODEL));
+        v[new].clone()
+    });
+    unsafe {
+        if let Ok(c) = GetDlgItem(Some(win), ID_KEY_LABEL) {
+            set_text(c, PROVIDERS[new].key_label);
+        }
+        if let Ok(c) = GetDlgItem(Some(win), ID_KEY) {
+            set_text(c, &key); // EN_CHANGE updates the key hint
+        }
+        if let Ok(c) = GetDlgItem(Some(win), ID_MODEL) {
+            fill_models(c, new, &model);
+        }
+    }
+}
+
 fn save(win: HWND) -> Result<(), String> {
-    let new = Settings {
-        api_key_enc: String::new(), // filled in by apply_settings
-        model: text_of(win, ID_MODEL),
+    let cur = CURRENT_PROVIDER.with(|c| c.get());
+    let values = PROVIDER_VALUES.with(|v| {
+        let mut v = v.borrow_mut();
+        v[cur] = (text_of(win, ID_KEY), text_of(win, ID_MODEL));
+        v.clone()
+    });
+    if values[cur].1.is_empty() {
+        return Err("Model is empty".into());
+    }
+    let mut new = Settings {
+        provider: PROVIDERS[cur].id.into(),
         languages: selected_language(win),
         hotkey: HOTKEY_TEXT.with(|t| t.borrow().clone()),
         history_size: selected_history_size(win),
+        ..Default::default()
     };
-    if new.model.is_empty() {
-        return Err("Model is empty".into());
+    for (p, (_, model)) in values.iter().enumerate() {
+        let model = if model.is_empty() {
+            PROVIDERS[p].models[0].to_string()
+        } else {
+            model.clone()
+        };
+        new.set_provider_values(p, model, String::new()); // keys are encrypted by apply_settings
     }
-    super::apply_settings(new, text_of(win, ID_KEY))
+    super::apply_settings(new, values.map(|(key, _)| key))
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -501,6 +594,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     if let Ok(h) = GetDlgItem(Some(hwnd), ID_KEY_HINT) {
                         let _ = SetWindowTextW(h, PCWSTR(hint.as_ptr()));
                     }
+                    return LRESULT(0);
+                }
+                if (wp.0 >> 16) as u32 == CBN_SELCHANGE && (wp.0 & 0xFFFF) as i32 == ID_PROVIDER {
+                    switch_provider(hwnd);
                     return LRESULT(0);
                 }
                 match (wp.0 & 0xFFFF) as i32 {

@@ -3,8 +3,8 @@
 mod audio;
 mod history;
 mod hotkey;
-mod openai;
 mod settings;
+mod stt;
 mod update;
 #[cfg(windows)]
 mod win;

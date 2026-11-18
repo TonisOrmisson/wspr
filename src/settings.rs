@@ -6,8 +6,13 @@ use std::path::Path;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Settings {
+    /// `stt::PROVIDERS` id: "openai" or "openrouter".
+    pub provider: String,
+    /// OpenAI key and model (field names kept from versions with OpenAI only).
     pub api_key_enc: String,
     pub model: String,
+    pub openrouter_key_enc: String,
+    pub openrouter_model: String,
     /// Comma-separated ISO-639-1 codes, e.g. "et" or "et,en".
     pub languages: String,
     pub hotkey: String,
@@ -18,8 +23,11 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            provider: "openai".into(),
             api_key_enc: String::new(),
             model: "gpt-transcribe".into(),
+            openrouter_key_enc: String::new(),
+            openrouter_model: "microsoft/mai-transcribe-2".into(),
             languages: "et".into(),
             hotkey: "Ctrl+Shift+Space".into(),
             history_size: 50,
@@ -37,6 +45,35 @@ impl Settings {
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         crate::history::write_atomic(path, serde_json::to_string_pretty(self)?.as_bytes())
+    }
+
+    pub fn provider_index(&self) -> usize {
+        crate::stt::provider_index(&self.provider)
+    }
+
+    /// Model and encrypted key of provider `p` (index into `stt::PROVIDERS`).
+    pub fn model_of(&self, p: usize) -> &str {
+        if p == 1 {
+            &self.openrouter_model
+        } else {
+            &self.model
+        }
+    }
+
+    pub fn key_enc_of(&self, p: usize) -> &str {
+        if p == 1 {
+            &self.openrouter_key_enc
+        } else {
+            &self.api_key_enc
+        }
+    }
+
+    pub fn set_provider_values(&mut self, p: usize, model: String, key_enc: String) {
+        if p == 1 {
+            (self.openrouter_model, self.openrouter_key_enc) = (model, key_enc);
+        } else {
+            (self.model, self.api_key_enc) = (model, key_enc);
+        }
     }
 
     pub fn language_list(&self) -> Vec<String> {
@@ -167,6 +204,11 @@ mod tests {
         assert_eq!(partial.model, "whisper-1");
         assert_eq!(partial.languages, "et");
         assert_eq!(partial.history_size, 50);
+        assert_eq!(partial.provider_index(), 0);
+        let mut s = Settings::default();
+        s.set_provider_values(1, "m".into(), "k".into());
+        assert_eq!((s.model_of(1), s.key_enc_of(1)), ("m", "k"));
+        assert_eq!(s.model_of(0), "gpt-transcribe");
         // Files from older versions still load; the removed `prompt` field is ignored.
         let old: Settings = serde_json::from_str(r#"{"prompt":"x","hotkey":"F9"}"#).unwrap();
         assert_eq!(old.hotkey, "F9");

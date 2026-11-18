@@ -11,7 +11,7 @@ mod sys;
 
 use crate::history::{self, Entry};
 use crate::settings::{self, Settings};
-use crate::{audio, hotkey, openai};
+use crate::{audio, hotkey, stt};
 use overlay::View;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -60,7 +60,8 @@ struct App {
     hinst: HINSTANCE,
     scale: f32,
     settings: Settings,
-    api_key: String,
+    /// Decrypted API keys, one per `stt::PROVIDERS` entry.
+    keys: [String; 2],
     history: Vec<Entry>,
     state: State,
     restore_clip: Option<String>,
@@ -68,6 +69,12 @@ struct App {
     icons: [HICON; 3],
     icon: usize,
     taskbar_created: u32,
+}
+
+impl App {
+    fn active_key(&self) -> &str {
+        &self.keys[self.settings.provider_index()]
+    }
 }
 
 thread_local! {
@@ -135,16 +142,19 @@ pub fn run() {
             Err(e) => return message(&format!("Could not create the window: {e}")),
         };
         let settings = Settings::load(&settings_path());
-        let api_key = settings::from_hex(&settings.api_key_enc)
-            .and_then(|b| sys::unprotect(&b))
-            .unwrap_or_default();
+        let decrypt = |p: usize| {
+            settings::from_hex(settings.key_enc_of(p))
+                .and_then(|b| sys::unprotect(&b))
+                .unwrap_or_default()
+        };
+        let keys = [decrypt(0), decrypt(1)];
         let app = App {
             hwnd,
             overlay: overlay::create(hinst),
             hinst,
             scale: GetDpiForSystem() as f32 / 96.0,
             settings,
-            api_key,
+            keys,
             history: history::load(&history_path()),
             state: State::Idle,
             restore_clip: None,
@@ -176,7 +186,7 @@ pub fn run() {
         if let Some(e) = &hotkey_err {
             message(e);
         }
-        if hotkey_err.is_some() || with(|a| a.api_key.is_empty()) {
+        if hotkey_err.is_some() || with(|a| a.active_key().is_empty()) {
             open_settings();
         }
 
@@ -256,20 +266,25 @@ fn register_hotkey() -> Result<(), String> {
 }
 
 /// Called by the settings window on Save.
-pub(crate) fn apply_settings(mut new: Settings, api_key: String) -> Result<(), String> {
+/// `new` carries the models; `keys` are the plain API keys per provider.
+pub(crate) fn apply_settings(mut new: Settings, keys: [String; 2]) -> Result<(), String> {
     hotkey::parse(&new.hotkey)?;
-    let key = api_key.trim().to_string();
-    new.api_key_enc = if key.is_empty() {
-        String::new()
-    } else {
-        settings::to_hex(&sys::protect(&key).ok_or("Could not encrypt the API key")?)
-    };
+    let keys = keys.map(|k| k.trim().to_string());
+    for (p, key) in keys.iter().enumerate() {
+        let enc = if key.is_empty() {
+            String::new()
+        } else {
+            settings::to_hex(&sys::protect(key).ok_or("Could not encrypt the API key")?)
+        };
+        let model = new.model_of(p).to_string();
+        new.set_provider_values(p, model, enc);
+    }
     new.save(&settings_path())
         .map_err(|e| format!("Could not save settings: {e}"))?;
     with(|a| {
         a.history.truncate(new.history_size);
         a.settings = new;
-        a.api_key = key;
+        a.keys = keys;
     });
     trim_history()?;
     tray(NIM_MODIFY, None);
@@ -307,8 +322,7 @@ fn open_settings() {
     if with(|a| matches!(a.state, State::Recording(_))) {
         stop();
     }
-    let (hinst, s, key, scale) =
-        with(|a| (a.hinst, a.settings.clone(), a.api_key.clone(), a.scale));
+    let (hinst, s, key, scale) = with(|a| (a.hinst, a.settings.clone(), a.keys.clone(), a.scale));
     settings_ui::open(hinst, &s, &key, scale);
 }
 
@@ -337,7 +351,7 @@ fn toggle() {
         NeedKey,
     }
     let act = with(|a| match a.state {
-        State::Idle if a.api_key.is_empty() => Act::NeedKey,
+        State::Idle if a.active_key().is_empty() => Act::NeedKey,
         State::Idle => Act::Start,
         State::Recording(_) => Act::Stop,
         State::Transcribing => Act::Busy,
@@ -396,20 +410,22 @@ fn stop() {
 }
 
 fn transcribe(wav: Vec<u8>) {
-    let (hwnd, key, model, langs) = with(|a| {
+    let (hwnd, url, key, model, langs) = with(|a| {
         a.state = State::Transcribing;
         let s = &a.settings;
+        let p = s.provider_index();
         (
             a.hwnd.0 as isize,
-            a.api_key.clone(),
-            s.model.clone(),
+            stt::PROVIDERS[p].url,
+            a.keys[p].clone(),
+            s.model_of(p).to_string(),
             s.language_list(),
         )
     });
     tray(NIM_MODIFY, Some(ICON_BUSY));
     show(View::Transcribing, 0);
     std::thread::spawn(move || {
-        let result = openai::transcribe(&key, &model, &langs, &wav);
+        let result = stt::transcribe(url, &key, &model, &langs, &wav);
         let p = Box::into_raw(Box::new((result, wav)));
         unsafe {
             if PostMessageW(
@@ -552,7 +568,7 @@ fn retry() {
     if !with(|a| matches!(a.state, State::Idle)) {
         return sys::play(Sound::Error);
     }
-    if with(|a| a.api_key.is_empty()) {
+    if with(|a| a.active_key().is_empty()) {
         return open_settings();
     }
     match std::fs::read(failed_path()) {
