@@ -23,6 +23,7 @@ thread_local! {
     static WINDOW: Cell<Option<HWND>> = const { Cell::new(None) };
     static FONT: Cell<HFONT> = Cell::new(HFONT::default());
     static LAST_FOCUS: Cell<HWND> = Cell::new(HWND::default());
+    static SAVED_HOTKEY: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
 pub fn hwnd() -> Option<HWND> {
@@ -319,6 +320,7 @@ pub fn open(hinst: HINSTANCE, s: &Settings, api_key: &str, scale: f32) {
 
         // While the hotkey is being edited, pressing it must not start a dictation.
         super::suspend_hotkey();
+        SAVED_HOTKEY.with(|h| *h.borrow_mut() = s.hotkey.clone());
         let _ = ShowWindow(win, SW_SHOW);
         let _ = SetForegroundWindow(win);
     }
@@ -356,6 +358,11 @@ fn captured_hotkey(win: HWND) -> Result<String, String> {
             .map(|c| SendMessageW(c, HKM_GETHOTKEY, None, None).0 as u32 & 0xFFFF)
             .unwrap_or(0)
     };
+    // The control cannot show Win, so an unchanged hotkey keeps its saved text (e.g. Win+F9).
+    let saved = SAVED_HOTKEY.with(|h| h.borrow().clone());
+    if hotkey::parse(&saved).is_ok_and(|(m, k)| hotkey::to_control(m, k) == word) {
+        return Ok(saved);
+    }
     let (mods, vk) = hotkey::from_control(word);
     if vk == 0 {
         return Err("Click the Hotkey field and press the key combination you want".into());
