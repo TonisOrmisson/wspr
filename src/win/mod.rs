@@ -378,7 +378,10 @@ fn on_result(result: Result<String, String>, wav: Vec<u8>) {
             });
             match (paste(&text), saved) {
                 (Err(e), _) => fail(format!("{e}. Tekst on ajaloos.")),
-                (Ok(false), _) => show(
+                (Ok(false), Err(e)) => fail(format!(
+                    "Kleepida ei saanud ja ajalugu ei salvestunud ({e}). Tekst on lõikelaual"
+                )),
+                (Ok(false), Ok(())) => show(
                     View::Info("Kleepida ei saanud, tekst on lõikelaual (Ctrl+V)".into()),
                     5000,
                 ),

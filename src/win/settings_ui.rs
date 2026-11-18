@@ -297,10 +297,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     LAST_FOCUS.with(|f| f.set(GetFocus()));
                 } else {
                     let last = LAST_FOCUS.with(|f| f.get());
+                    let key = GetDlgItem(Some(hwnd), ID_KEY).unwrap_or_default();
                     let target = if IsChild(hwnd, last).as_bool() {
                         last
+                    } else if GetWindowTextLengthW(key) == 0 {
+                        key
                     } else {
-                        GetDlgItem(Some(hwnd), ID_KEY).unwrap_or_default()
+                        // A saved key should not be overwritten by accidental typing.
+                        GetDlgItem(Some(hwnd), ID_LANG).unwrap_or_default()
                     };
                     let _ = SetFocus(Some(target));
                 }
