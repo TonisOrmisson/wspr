@@ -26,6 +26,9 @@ const UPDATE_RETRY: Duration = Duration::from_secs(10 * 60); // an update waits 
 const PILL: egui::Vec2 = egui::vec2(240.0, 40.0);
 const PILL_WIDE: egui::Vec2 = egui::vec2(600.0, 40.0);
 const PILL_BG: egui::Color32 = egui::Color32::from_rgb(32, 32, 32);
+/// Linux draws the pill rounded in a transparent, click-through window. On Windows that kind of
+/// window is layered, which OpenGL cannot draw into, so there it is opaque with a system region.
+const TRANSPARENT: bool = cfg!(target_os = "linux");
 
 /// Result, the audio (kept on failure), request time in ms, and what was sent (for the log).
 type DoneResult = (Result<String, String>, Vec<u8>, u128, String);
@@ -84,6 +87,8 @@ pub fn run() {
         .with_app_id("wspr")
         .with_icon(window_icon())
         .with_decorations(false)
+        .with_transparent(TRANSPARENT)
+        .with_mouse_passthrough(TRANSPARENT)
         .with_window_level(egui::WindowLevel::AlwaysOnTop)
         .with_taskbar(false)
         .with_active(false)
@@ -144,7 +149,7 @@ impl App {
         }));
 
         let settings = Settings::load(&data_path("settings.json"));
-        let keys = [0, 1].map(|p| platform::decrypt_key(settings.key_enc_of(p)));
+        let keys = [0, 1].map(|p| platform::load_key(stt::PROVIDERS[p].id, settings.key_enc_of(p)));
         let icon = |rgba: Vec<u8>| Icon::from_rgba(rgba, 32, 32).ok();
         let tray_icons = [
             icon(include_bytes!("../res/icon-32.rgba").to_vec())
@@ -186,6 +191,14 @@ impl App {
         app.refresh_menu();
         log(format!("wspr {VERSION} started"));
         app.announce_update();
+        match platform::ensure_installed() {
+            Ok(Some(msg)) => {
+                log(&msg);
+                app.show(Overlay::Info(msg), Some(Duration::from_secs(6)));
+            }
+            Ok(None) => {}
+            Err(e) => log(format!("ERROR Install: {e}")),
+        }
         let hotkey_err = app.register_hotkey().err();
         if let Some(e) = &hotkey_err {
             app.fail(e.clone());
@@ -532,7 +545,7 @@ impl App {
         let keys = form.keys.clone().map(|k| k.trim().to_string());
         for (i, key) in keys.iter().enumerate() {
             let model = new.model_of(i).to_string();
-            new.set_provider_values(i, model, platform::encrypt_key(key)?);
+            new.set_provider_values(i, model, platform::save_key(stt::PROVIDERS[i].id, key)?);
         }
         new.save(&data_path("settings.json"))
             .map_err(|e| format!("Could not save settings: {e}"))?;
@@ -625,17 +638,17 @@ impl App {
                 ));
                 UPDATE_RETRY
             }
-            Ok(Some((version, bytes))) => match install_update(&version, &bytes) {
-                Ok(()) => {
-                    self.show(Overlay::Info(format!("Updating to wspr {version}…")), None);
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    UPDATE_EVERY
+            Ok(Some((version, bytes))) => {
+                log(format!("Installing update {version}"));
+                match platform::install_update(&version, &bytes) {
+                    Ok(()) => {
+                        self.show(Overlay::Info(format!("Updating to wspr {version}…")), None);
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    Err(e) => self.fail(e),
                 }
-                Err(e) => {
-                    self.fail(e);
-                    UPDATE_EVERY
-                }
-            },
+                UPDATE_EVERY
+            }
         };
         self.next_update = Instant::now() + next;
     }
@@ -762,7 +775,7 @@ impl App {
         let rect = ui.max_rect();
         let h = rect.height();
         let painter = ui.painter();
-        painter.rect_filled(rect, 0.0, PILL_BG);
+        painter.rect_filled(rect, if TRANSPARENT { h / 2.0 } else { 0.0 }, PILL_BG);
         painter.circle_filled(
             egui::pos2(rect.left() + h / 2.0, rect.center().y),
             h * 0.2,
@@ -802,7 +815,7 @@ impl App {
             .with_title("wspr settings")
             .with_app_id("wspr")
             .with_icon(window_icon())
-            .with_inner_size([520.0, 330.0])
+            .with_inner_size([520.0, 260.0])
             .with_resizable(false);
         let action = ui.ctx().show_viewport_immediate(
             egui::ViewportId::from_hash_of("settings"),
@@ -850,7 +863,11 @@ impl eframe::App for App {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        PILL_BG.to_normalized_gamma_f32()
+        if TRANSPARENT {
+            [0.0; 4]
+        } else {
+            PILL_BG.to_normalized_gamma_f32()
+        }
     }
 }
 
@@ -861,18 +878,6 @@ fn open_file(path: &std::path::Path) {
     if let Err(e) = open::that_detached(path) {
         platform::alert(&format!("Could not open {}: {e}", path.display()));
     }
-}
-
-/// Saves the installer and starts it silently; it replaces wspr and starts the new version.
-fn install_update(version: &str, bytes: &[u8]) -> Result<(), String> {
-    let path = std::env::temp_dir().join(format!("wspr-setup-{version}.exe"));
-    std::fs::write(&path, bytes).map_err(|e| format!("Could not save the update: {e}"))?;
-    log(format!("Installing update {version}"));
-    std::process::Command::new(&path)
-        .arg("/S")
-        .spawn()
-        .map_err(|e| format!("Could not start the update installer: {e}"))?;
-    Ok(())
 }
 
 /// A filled anti-aliased circle as 32x32 RGBA, for the recording and busy tray icons.

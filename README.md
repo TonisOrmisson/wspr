@@ -1,10 +1,10 @@
 # wspr
 
-Minimal dictation for Windows 10 and 11. Press a hotkey, speak, press it again: the audio is
+Minimal dictation for Windows 10/11 and Linux (X11). Press a hotkey, speak, press it again: the audio is
 transcribed by OpenAI or by any speech-to-text model on OpenRouter, and the text is pasted where
 your cursor is.
 
-No account, no telemetry, one ~8 MB `.exe`. You bring your own API key.
+No account, no telemetry, one file of ~8-13 MB. You bring your own API key.
 
 ## Features
 
@@ -20,7 +20,7 @@ No account, no telemetry, one ~8 MB `.exe`. You bring your own API key.
 - Updates itself: checks GitHub Releases at start and every hour, verifies the download's
   SHA-256 and installs it silently. It never interrupts a dictation.
 
-## Setup
+## Setup on Windows
 
 1. Download `wspr-setup-x.y.z.exe` from [Releases](https://github.com/TonisOrmisson/wspr/releases)
    and run it. It installs for your user only (no admin rights) into
@@ -29,6 +29,21 @@ No account, no telemetry, one ~8 MB `.exe`. You bring your own API key.
    The installer is not code-signed, so SmartScreen may warn: "More info" > "Run anyway".
 2. On first start the settings window opens. Pick a provider, paste its API key, choose your
    language (or Auto-detect) and, if you like, a different hotkey: click the field and press it.
+
+## Setup on Linux
+
+Download `wspr-linux-x86_64` from [Releases](https://github.com/TonisOrmisson/wspr/releases), make
+it executable and run it:
+
+```bash
+chmod +x wspr-linux-x86_64 && ./wspr-linux-x86_64
+```
+
+On first start it copies itself to `~/.local/bin/wspr`, adds itself to the app menu and to
+autostart, and opens the settings. Updates replace `~/.local/bin/wspr`. API keys go to the desktop
+keyring (GNOME Keyring or KWallet). Built on Ubuntu 24.04; Wayland sessions are not supported yet.
+
+## Using it
 
 The tray icon menu has Check for updates, View log, Settings and Quit, plus Retry after a
 failed request.
@@ -49,8 +64,8 @@ and `gpt-4o-mini-transcribe` on 2027-02-26.
 ## Privacy
 
 - Audio goes only to the provider you choose, and only while you dictate.
-- Settings and history live in `%APPDATA%\wspr\`. API keys are encrypted with Windows DPAPI
-  (readable only by your Windows user). The history is plain text; set it to Off to keep none.
+- Settings and history live in `%APPDATA%\wspr\` (Windows) or `~/.config/wspr/` (Linux). API keys
+  are encrypted with Windows DPAPI (readable only by your Windows user) or kept in the Linux keyring. The history is plain text; set it to Off to keep none.
 - The log (`wspr.log`, at most ~512 KB) never contains dictated text or API keys.
 - The update check is one request per hour to the GitHub API.
 
@@ -58,7 +73,7 @@ and `gpt-4o-mini-transcribe` on 2027-02-26.
 
 ```bash
 cargo test                                             # platform-independent parts, any OS
-cargo build --release                                  # on Windows
+cargo build --release                                  # on Windows or Linux (Linux needs libasound2-dev, libxkbcommon-dev)
 cargo build --release --target x86_64-pc-windows-gnu   # from Linux, needs gcc-mingw-w64-x86-64
 makensis -DVERSION=X.Y.Z -DEXE=path/to/wspr.exe installer/wspr.nsi   # installer, NSIS 3
 ```

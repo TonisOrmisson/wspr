@@ -1,5 +1,5 @@
-//! The few things that differ per operating system: data folder, key encryption, single
-//! instance, paste, beeps, time. Everything else is shared.
+//! The few things that differ per operating system: data folder, key storage, single
+//! instance, installing and updating, paste, dialogs, overlay styling. Everything else is shared.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -25,7 +25,7 @@ pub fn timestamp() -> String {
     chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-// ---------- key encryption (Windows DPAPI: readable only by this Windows user) ----------
+// ---------- API keys: Windows DPAPI (readable only by this Windows user), Linux keyring ----------
 
 #[cfg(windows)]
 mod dpapi {
@@ -61,22 +61,48 @@ mod dpapi {
     }
 }
 
-/// Encrypted key as stored in settings.json (hex), or "" for no key.
-pub fn encrypt_key(key: &str) -> Result<String, String> {
-    if key.is_empty() {
-        return Ok(String::new());
-    }
+/// Stores the key of `provider` and returns what settings.json keeps: the DPAPI-encrypted key
+/// as hex on Windows, a marker on Linux (the key itself is in the keyring). "" for no key.
+pub fn save_key(provider: &str, key: &str) -> Result<String, String> {
     #[cfg(windows)]
-    return dpapi::protect(key)
-        .map(|b| crate::settings::to_hex(&b))
-        .ok_or_else(|| "Could not encrypt the API key".into());
+    {
+        let _ = provider;
+        if key.is_empty() {
+            return Ok(String::new());
+        }
+        dpapi::protect(key)
+            .map(|b| crate::settings::to_hex(&b))
+            .ok_or_else(|| "Could not encrypt the API key".into())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let entry = keyring::Entry::new("wspr", provider).map_err(|e| format!("Keyring: {e}"))?;
+        if key.is_empty() {
+            let _ = entry.delete_credential();
+            return Ok(String::new());
+        }
+        entry
+            .set_password(key)
+            .map_err(|e| format!("Could not store the API key in the keyring: {e}"))?;
+        Ok("keyring".into())
+    }
 }
 
-pub fn decrypt_key(stored: &str) -> String {
+pub fn load_key(provider: &str, stored: &str) -> String {
+    if stored.is_empty() {
+        return String::new();
+    }
     #[cfg(windows)]
-    return crate::settings::from_hex(stored)
-        .and_then(|b| dpapi::unprotect(&b))
-        .unwrap_or_default();
+    {
+        let _ = provider;
+        crate::settings::from_hex(stored)
+            .and_then(|b| dpapi::unprotect(&b))
+            .unwrap_or_default()
+    }
+    #[cfg(target_os = "linux")]
+    keyring::Entry::new("wspr", provider)
+        .and_then(|e| e.get_password())
+        .unwrap_or_default()
 }
 
 // ---------- single instance ----------
@@ -93,6 +119,118 @@ pub fn single_instance() -> Option<impl Sized> {
         return None;
     }
     Some(mutex)
+}
+
+#[cfg(target_os = "linux")]
+pub fn single_instance() -> Option<impl Sized> {
+    let file = std::fs::File::create(data_dir().join("wspr.lock")).ok()?;
+    // The lock is released when the process ends, also after a crash.
+    file.try_lock().ok()?;
+    Some(file)
+}
+
+// ---------- installing and updating ----------
+
+#[cfg(target_os = "linux")]
+fn linux_bin() -> Option<PathBuf> {
+    Some(PathBuf::from(std::env::var_os("HOME")?).join(".local/bin/wspr"))
+}
+
+/// Linux has no installer: on first start wspr copies itself to ~/.local/bin and adds itself to
+/// the app menu and to autostart. Returns a message when it did so. Windows: the installer did it.
+pub fn ensure_installed() -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    return Ok(None);
+    #[cfg(target_os = "linux")]
+    {
+        let bin = linux_bin().ok_or("HOME is not set")?;
+        let home = bin
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .ok_or("bad HOME")?;
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let fresh = std::fs::canonicalize(&exe).ok() != std::fs::canonicalize(&bin).ok();
+        if fresh {
+            replace_binary(
+                &bin,
+                &std::fs::read(&exe).map_err(|e| format!("Could not read wspr: {e}"))?,
+            )?;
+        }
+        let desktop = format!(
+            "[Desktop Entry]\nType=Application\nName=wspr\nComment=Dictation: press a hotkey, speak, the text is pasted\n\
+             Exec={}\nIcon=wspr\nTerminal=false\nCategories=Utility;\nStartupWMClass=wspr\n",
+            bin.display()
+        );
+        let files: [(PathBuf, &[u8]); 3] = [
+            (
+                home.join(".local/share/applications/wspr.desktop"),
+                desktop.as_bytes(),
+            ),
+            (
+                home.join(".config/autostart/wspr.desktop"),
+                desktop.as_bytes(),
+            ),
+            (
+                home.join(".local/share/icons/hicolor/256x256/apps/wspr.png"),
+                include_bytes!("../res/wspr.png"),
+            ),
+        ];
+        for (path, bytes) in files {
+            if fresh || !path.exists() {
+                if let Some(dir) = path.parent() {
+                    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+                }
+                std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            }
+        }
+        Ok(fresh.then(|| {
+            "wspr is installed: it is in the app menu and starts with your session".into()
+        }))
+    }
+}
+
+/// Writes the new binary next to the old one and renames it over, so a failed write keeps the old.
+#[cfg(target_os = "linux")]
+fn replace_binary(bin: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(dir) = bin.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let tmp = bin.with_extension("new");
+    std::fs::write(&tmp, bytes).map_err(|e| format!("Could not write {}: {e}", tmp.display()))?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, bin).map_err(|e| format!("Could not replace {}: {e}", bin.display()))
+}
+
+/// Installs a downloaded, checksum-verified update and starts it. The caller then quits.
+pub fn install_update(version: &str, bytes: &[u8]) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // The silent installer replaces wspr.exe and starts the new version.
+        let path = std::env::temp_dir().join(format!("wspr-setup-{version}.exe"));
+        std::fs::write(&path, bytes).map_err(|e| format!("Could not save the update: {e}"))?;
+        std::process::Command::new(&path)
+            .arg("/S")
+            .spawn()
+            .map_err(|e| format!("Could not start the update installer: {e}"))?;
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = version;
+        let bin = linux_bin().ok_or("HOME is not set")?;
+        replace_binary(&bin, bytes)?;
+        // Started after a second, once this process has quit and released the single-instance lock.
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg("sleep 1; exec \"$0\"")
+            .arg(&bin)
+            .spawn()
+            .map_err(|e| format!("Could not start the new version: {e}"))?;
+        Ok(())
+    }
 }
 
 // ---------- paste ----------
@@ -193,9 +331,23 @@ pub fn alert(text: &str) {
             );
         }
     }
+    #[cfg(target_os = "linux")]
+    {
+        let shown = std::process::Command::new("zenity")
+            .args(["--warning", "--title=wspr", "--no-markup", "--text", text])
+            .status()
+            .is_ok_and(|s| s.success());
+        if !shown {
+            let _ = std::process::Command::new("notify-send")
+                .args(["wspr", text])
+                .status();
+        }
+        eprintln!("wspr: {text}");
+    }
 }
 
-/// Rounds the overlay into a pill of `w` x `h` physical pixels.
+/// Rounds the overlay into a pill of `w` x `h` physical pixels (Linux paints it rounded instead).
+#[cfg_attr(not(windows), allow(unused_variables))]
 pub fn round_corners(window: &winit::window::Window, w: i32, h: i32) {
     #[cfg(windows)]
     {
@@ -228,6 +380,7 @@ fn hwnd(window: &winit::window::Window) -> Option<windows::Win32::Foundation::HW
 
 /// The overlay must never take focus (the paste would go to it) and must stay out of Alt+Tab.
 /// It must not be a layered window either: OpenGL cannot draw into one, so it would show empty.
+#[cfg_attr(not(windows), allow(unused_variables))]
 pub fn style_overlay(window: &winit::window::Window) {
     #[cfg(windows)]
     {

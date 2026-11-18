@@ -54,7 +54,7 @@ pub fn parse_model_ids(json: &str) -> Option<Vec<String>> {
 }
 
 /// Speech-to-text model IDs on OpenRouter, or None when the list cannot be fetched.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn openrouter_stt_models() -> Option<Vec<String>> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(8)))
@@ -122,7 +122,7 @@ pub fn parse_response(status: u16, body: &str) -> Result<String, String> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn transcribe(
     url: &str,
     api_key: &str,

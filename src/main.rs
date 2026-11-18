@@ -1,27 +1,27 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod app;
 mod applog;
 mod audio;
 mod history;
 mod hotkey;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod platform;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod recorder;
 mod settings;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod settings_view;
 mod stt;
 mod update;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn main() {
     app::run();
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn main() {
-    eprintln!("wspr runs on Windows only for now. On other systems only `cargo test` is useful.");
+    eprintln!("wspr runs on Windows and Linux.");
 }

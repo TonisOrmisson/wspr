@@ -24,8 +24,21 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     matches!((parse_version(latest), parse_version(current)), (Some(l), Some(c)) if l > c)
 }
 
-/// Picks the installer asset from a GitHub "latest release" JSON. None if it has no usable installer.
-pub fn parse_latest(json: &str) -> Result<Option<Release>, String> {
+/// The release asset this platform updates from: the installer on Windows, the binary on Linux.
+pub fn is_update_asset(name: &str) -> bool {
+    if cfg!(windows) {
+        name.starts_with("wspr-setup-") && name.ends_with(".exe")
+    } else {
+        name == "wspr-linux-x86_64"
+    }
+}
+
+/// Picks the asset `is_asset` accepts from a GitHub "latest release" JSON. None if there is none
+/// with a checksum.
+pub fn parse_latest(
+    json: &str,
+    is_asset: impl Fn(&str) -> bool,
+) -> Result<Option<Release>, String> {
     let v: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("Bad update info: {e}"))?;
     let Some(tag) = v["tag_name"].as_str() else {
@@ -38,10 +51,9 @@ pub fn parse_latest(json: &str) -> Result<Option<Release>, String> {
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default();
-    let installer = assets.iter().find(|a| {
-        let name = a["name"].as_str().unwrap_or("");
-        name.starts_with("wspr-setup-") && name.ends_with(".exe")
-    });
+    let installer = assets
+        .iter()
+        .find(|a| is_asset(a["name"].as_str().unwrap_or("")));
     Ok(installer.and_then(|a| {
         Some(Release {
             version: tag.trim_start_matches('v').to_string(),
@@ -61,7 +73,7 @@ pub fn sha256_matches(bytes: &[u8], expected_hex: &str) -> bool {
 }
 
 /// Ok(None): already up to date. Ok(Some): a newer, checksum-verified installer.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn fetch_newer(current: &str) -> Result<Option<(String, Vec<u8>)>, String> {
     use std::time::Duration;
     let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -87,7 +99,7 @@ pub fn fetch_newer(current: &str) -> Result<Option<(String, Vec<u8>)>, String> {
             .map_err(|e| format!("Update download failed: {e}"))
     };
     let json = String::from_utf8_lossy(&get(LATEST_URL)?).into_owned();
-    let Some(rel) = parse_latest(&json)? else {
+    let Some(rel) = parse_latest(&json, is_update_asset)? else {
         return Ok(None);
     };
     if !is_newer(&rel.version, current) {
@@ -121,13 +133,27 @@ mod tests {
         assert!(!is_newer("1.0.0.1", "0.2.0"));
     }
 
+    fn windows_asset(name: &str) -> bool {
+        name.starts_with("wspr-setup-") && name.ends_with(".exe")
+    }
+
+    #[test]
+    fn update_asset_per_platform() {
+        assert_eq!(
+            is_update_asset("wspr-linux-x86_64"),
+            cfg!(target_os = "linux")
+        );
+        assert_eq!(is_update_asset("wspr-setup-1.0.0.exe"), cfg!(windows));
+        assert!(!is_update_asset("wspr.exe"));
+    }
+
     #[test]
     fn finds_installer_with_digest() {
         let json = r#"{"tag_name":"v0.3.0","assets":[
             {"name":"wspr.exe","browser_download_url":"https://x/wspr.exe","digest":"sha256:aa"},
             {"name":"wspr-setup-0.3.0.exe","browser_download_url":"https://x/setup.exe","digest":"sha256:ABCD"}]}"#;
         assert_eq!(
-            parse_latest(json),
+            parse_latest(json, windows_asset),
             Ok(Some(Release {
                 version: "0.3.0".into(),
                 url: "https://x/setup.exe".into(),
@@ -139,13 +165,13 @@ mod tests {
     #[test]
     fn rejects_missing_digest_and_errors() {
         let no_digest = r#"{"tag_name":"v0.3.0","assets":[{"name":"wspr-setup-0.3.0.exe","browser_download_url":"https://x"}]}"#;
-        assert_eq!(parse_latest(no_digest), Ok(None));
+        assert_eq!(parse_latest(no_digest, windows_asset), Ok(None));
         assert_eq!(
-            parse_latest(r#"{"tag_name":"v0.3.0","assets":[]}"#),
+            parse_latest(r#"{"tag_name":"v0.3.0","assets":[]}"#, windows_asset),
             Ok(None)
         );
         assert!(
-            parse_latest(r#"{"message":"Not Found"}"#)
+            parse_latest(r#"{"message":"Not Found"}"#, windows_asset)
                 .unwrap_err()
                 .contains("Not Found")
         );

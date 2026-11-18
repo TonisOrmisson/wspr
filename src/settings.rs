@@ -152,6 +152,7 @@ pub fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+#[cfg_attr(not(windows), allow(dead_code))] // DPAPI keys are stored as hex on Windows only
 pub fn from_hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
