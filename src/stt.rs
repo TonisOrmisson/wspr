@@ -64,7 +64,8 @@ pub fn openrouter_stt_models() -> Option<Vec<String>> {
         .get("https://openrouter.ai/api/v1/models?output_modalities=transcription")
         .call()
         .ok()?;
-    parse_model_ids(&resp.body_mut().read_to_string().ok()?)
+    // An empty list (e.g. the filter changed) must not block every model.
+    parse_model_ids(&resp.body_mut().read_to_string().ok()?).filter(|m| !m.is_empty())
 }
 
 const BOUNDARY: &str = "wsprBoundary7MA4YWxkTrZu0gW";
