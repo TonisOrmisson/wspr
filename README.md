@@ -18,7 +18,7 @@ The UI is in Estonian, because that is what its author uses.
 - If the API request fails, the recording is kept and can be retried from the tray menu.
 - Settings window: OpenAI API key, model, input language, hotkey, optional vocabulary hint.
 - Your clipboard text is restored after pasting.
-- Updates itself: checks GitHub Releases at start and once a day (or from the tray menu),
+- Updates itself: checks GitHub Releases at start and every hour (or from the tray menu),
   verifies the download's SHA-256 and installs it silently. It never interrupts a dictation.
 
 ## Setup
