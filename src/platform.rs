@@ -195,20 +195,36 @@ pub fn alert(text: &str) {
     }
 }
 
+/// Rounds the overlay into a pill of `w` x `h` physical pixels.
+pub fn round_corners(window: &winit::window::Window, w: i32, h: i32) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+        if let Some(hwnd) = hwnd(window) {
+            unsafe {
+                // The window owns the region afterwards.
+                let rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, h, h);
+                SetWindowRgn(hwnd, Some(rgn), true);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn hwnd(window: &winit::window::Window) -> Option<windows::Win32::Foundation::HWND> {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(windows::Win32::Foundation::HWND(h.hwnd.get() as *mut _)),
+        _ => None,
+    }
+}
+
 /// The overlay must never take focus (the paste would go to it) and must stay out of Alt+Tab.
 pub fn style_overlay(window: &winit::window::Window) {
     #[cfg(windows)]
     {
-        use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::*;
-        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let Ok(handle) = window.window_handle() else {
-            return;
-        };
-        let RawWindowHandle::Win32(h) = handle.as_raw() else {
-            return;
-        };
-        let hwnd = HWND(h.hwnd.get() as *mut _);
+        let Some(hwnd) = hwnd(window) else { return };
         unsafe {
             let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(

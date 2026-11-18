@@ -1,6 +1,7 @@
 //! The app: tray icon, global hotkey, recording state machine, status overlay and settings
 //! window. The overlay is eframe's root window: always on top, click-through, and moved off
-//! screen when idle (hiding it would let Windows give it focus when it shows again).
+//! screen when idle (hiding it would let Windows give it focus when it shows again). It is
+//! opaque with rounded corners cut by the system: a transparent GL window showed empty on Windows.
 
 use crate::history::{self, Entry};
 use crate::platform::{self, Sound};
@@ -24,6 +25,7 @@ const UPDATE_EVERY: Duration = Duration::from_secs(60 * 60);
 const UPDATE_RETRY: Duration = Duration::from_secs(10 * 60); // an update waits for dictation to finish
 const PILL: egui::Vec2 = egui::vec2(240.0, 40.0);
 const PILL_WIDE: egui::Vec2 = egui::vec2(600.0, 40.0);
+const PILL_BG: egui::Color32 = egui::Color32::from_rgb(32, 32, 32);
 
 /// Result, the audio (kept on failure), request time in ms, and what was sent (for the log).
 type DoneResult = (Result<String, String>, Vec<u8>, u128, String);
@@ -82,7 +84,6 @@ pub fn run() {
         .with_app_id("wspr")
         .with_icon(window_icon())
         .with_decorations(false)
-        .with_transparent(true)
         .with_window_level(egui::WindowLevel::AlwaysOnTop)
         .with_mouse_passthrough(true)
         .with_taskbar(false)
@@ -737,6 +738,8 @@ impl App {
         let y = m.y + ms.height as i32 - h - (90.0 * scale) as i32; // above the taskbar
         let _ = window.request_inner_size(PhysicalSize::new(w as u32, h as u32));
         window.set_outer_position(PhysicalPosition::new(x, y));
+        platform::round_corners(window, w, h);
+        self.ctx.request_repaint(); // paint again at the new size
     }
 
     fn paint_overlay(&self, ui: &mut egui::Ui) {
@@ -760,11 +763,7 @@ impl App {
         let rect = ui.max_rect();
         let h = rect.height();
         let painter = ui.painter();
-        painter.rect_filled(
-            rect,
-            h / 2.0,
-            egui::Color32::from_rgba_unmultiplied(32, 32, 32, 240),
-        );
+        painter.rect_filled(rect, 0.0, PILL_BG);
         painter.circle_filled(
             egui::pos2(rect.left() + h / 2.0, rect.center().y),
             h * 0.2,
@@ -852,7 +851,7 @@ impl eframe::App for App {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0; 4] // the overlay window is transparent around the pill
+        PILL_BG.to_normalized_gamma_f32()
     }
 }
 
