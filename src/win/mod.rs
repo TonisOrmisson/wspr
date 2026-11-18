@@ -171,6 +171,7 @@ pub fn run() {
         };
         APP.with(|a| *a.borrow_mut() = Some(app));
         tray(NIM_ADD, None);
+        announce_update();
 
         SetTimer(Some(hwnd), T_UPDATE, UPDATE_FIRST_MS, None);
         let hotkey_err = register_hotkey().err();
@@ -191,6 +192,20 @@ pub fn run() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+    }
+}
+
+/// Shows "updated" on the first start of a new version, so a silent update is visible.
+fn announce_update() {
+    let file = data_dir().join("version.txt");
+    let updated = match std::fs::read_to_string(&file) {
+        Ok(prev) => prev.trim() != VERSION,
+        // Versions before 0.2.2 did not write the file; existing settings mean it is not a first install.
+        Err(_) => settings_path().exists(),
+    };
+    let _ = std::fs::write(&file, VERSION);
+    if updated {
+        show(View::Info(format!("wspr updated to {VERSION}")), 5000);
     }
 }
 

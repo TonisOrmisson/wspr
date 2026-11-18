@@ -1,6 +1,6 @@
 [package]
 name = "wspr"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 license = "MIT"
 description = "Minimal Windows dictation: press a hotkey, speak, OpenAI transcribes, text is pasted."
