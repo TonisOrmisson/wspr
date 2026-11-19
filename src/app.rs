@@ -117,6 +117,7 @@ struct App {
     /// What the native window currently shows: None = off screen, Some(wide).
     placed: Option<bool>,
     styled: bool,
+    shown: bool,
     restore_clip: Option<(String, Instant)>,
     next_update: Instant,
     checking_update: bool,
@@ -169,6 +170,7 @@ impl App {
             overlay_until: None,
             placed: None,
             styled: false,
+            shown: false,
             restore_clip: None,
             next_update: Instant::now() + UPDATE_FIRST,
             checking_update: false,
@@ -727,6 +729,13 @@ impl App {
             platform::style_overlay(window);
             self.styled = true;
         }
+        // GNOME on X11 drops an always-on-top hint sent before it manages the window,
+        // so it is sent again each time the overlay appears.
+        let shown = !matches!(self.overlay, Overlay::Hidden);
+        if TRANSPARENT && shown && !self.shown {
+            window.set_window_level(winit::window::WindowLevel::AlwaysOnTop);
+        }
+        self.shown = shown;
         if want == self.placed {
             return;
         }
