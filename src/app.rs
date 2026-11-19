@@ -36,6 +36,9 @@ type UpdateResult = (bool, Result<Option<(String, Vec<u8>)>, String>);
 
 enum Msg {
     Hotkey(u32),
+    /// `wspr toggle`, run by the GNOME shortcut on Wayland.
+    #[cfg(target_os = "linux")]
+    Toggle,
     Menu(String),
     Done(DoneResult),
     Update(UpdateResult),
@@ -78,6 +81,8 @@ fn window_icon() -> egui::IconData {
 }
 
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    crate::wayland::init();
     let Some(_instance) = platform::single_instance() else {
         platform::alert("wspr is already running (see the tray icon).");
         return;
@@ -183,6 +188,16 @@ impl App {
             enigo: enigo::Enigo::new(&enigo::Settings::default()).ok(),
             form: None,
         };
+        #[cfg(target_os = "linux")]
+        if crate::wayland::session() {
+            let (t, c) = (app.tx.clone(), app.ctx.clone());
+            if let Err(e) = crate::wayland::listen(move || {
+                let _ = t.send(Msg::Toggle);
+                c.request_repaint();
+            }) {
+                log(format!("ERROR Hotkey: {e}"));
+            }
+        }
         let mut builder = TrayIconBuilder::new()
             .with_tooltip(app.tooltip())
             .with_menu_on_left_click(true);
@@ -293,6 +308,11 @@ impl App {
     // ---------- hotkey ----------
 
     fn register_hotkey(&mut self) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        if crate::wayland::session() {
+            return crate::wayland::set_shortcut(Some(&self.settings.hotkey))
+                .map_err(|e| format!("Hotkey: {e}"));
+        }
         self.suspend_hotkey();
         let manager = self
             .hotkeys
@@ -313,6 +333,13 @@ impl App {
     }
 
     fn suspend_hotkey(&mut self) {
+        #[cfg(target_os = "linux")]
+        if crate::wayland::session() {
+            if let Err(e) = crate::wayland::set_shortcut(None) {
+                log(format!("ERROR Hotkey: {e}"));
+            }
+            return;
+        }
         if let (Some(m), Some(hk)) = (&self.hotkeys, self.hotkey.take()) {
             let _ = m.unregister(hk);
         }
@@ -474,10 +501,7 @@ impl App {
         clipboard
             .set_text(text)
             .map_err(|e| format!("Clipboard: {e}"))?;
-        let Some(enigo) = self.enigo.as_mut() else {
-            return Ok(false);
-        };
-        if !platform::send_paste(enigo) {
+        if !self.send_paste() {
             return Ok(false);
         }
         // shortcut: only text clipboard content is restored; an image on the clipboard is replaced by the dictation.
@@ -485,6 +509,16 @@ impl App {
             self.restore_clip = Some((p, Instant::now() + Duration::from_millis(600)));
         }
         Ok(true)
+    }
+
+    fn send_paste(&mut self) -> bool {
+        #[cfg(target_os = "linux")]
+        if crate::wayland::session() {
+            return crate::wayland::ctrl_v()
+                .map_err(|e| log(format!("ERROR {e}")))
+                .is_ok();
+        }
+        self.enigo.as_mut().is_some_and(platform::send_paste)
     }
 
     fn retry(&mut self) {
@@ -661,6 +695,10 @@ impl App {
         match msg {
             Msg::Hotkey(id) if self.hotkey.is_some_and(|h| h.id() == id) => self.toggle(),
             Msg::Hotkey(_) => {}
+            #[cfg(target_os = "linux")]
+            Msg::Toggle if self.form.is_none() => self.toggle(),
+            #[cfg(target_os = "linux")]
+            Msg::Toggle => {}
             Msg::Menu(id) => match id.as_str() {
                 "retry" => self.retry(),
                 "update" => self.check_update(true),

@@ -138,7 +138,7 @@ pub fn single_instance() -> Option<impl Sized> {
 // ---------- installing and updating ----------
 
 #[cfg(target_os = "linux")]
-fn linux_bin() -> Option<PathBuf> {
+pub fn linux_bin() -> Option<PathBuf> {
     Some(PathBuf::from(std::env::var_os("HOME")?).join(".local/bin/wspr"))
 }
 

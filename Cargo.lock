@@ -5030,7 +5030,7 @@ dependencies = [
 
 [[package]]
 name = "wspr"
-version = "0.10.3"
+version = "0.11.0"
 dependencies = [
  "arboard",
  "chrono",
@@ -5048,6 +5048,7 @@ dependencies = [
  "ureq",
  "windows 0.62.2",
  "winit",
+ "zbus",
 ]
 
 [[package]]

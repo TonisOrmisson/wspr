@@ -15,9 +15,15 @@ mod settings;
 mod settings_view;
 mod stt;
 mod update;
+#[cfg(target_os = "linux")]
+mod wayland;
 
 #[cfg(any(windows, target_os = "linux"))]
 fn main() {
+    #[cfg(target_os = "linux")]
+    if std::env::args().nth(1).as_deref() == Some("toggle") {
+        return wayland::send_toggle();
+    }
     app::run();
 }
 

@@ -118,9 +118,50 @@ pub fn to_accelerator(s: &str) -> Result<String, String> {
     Ok(prefix + &key)
 }
 
+/// The hotkey in GTK accelerator form, as GNOME shortcuts store it: "<Control><Shift>space".
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn to_gtk(s: &str) -> Result<String, String> {
+    let (mods, vk) = parse(s)?;
+    let key = match vk {
+        0x30..=0x39 => char::from_u32(vk).unwrap_or('0').to_string(),
+        0x41..=0x5A => char::from_u32(vk + 0x20).unwrap_or('a').to_string(),
+        0x60..=0x69 => format!("KP_{}", vk - 0x60),
+        0x70..=0x87 => format!("F{}", vk - 0x6F),
+        0x20 => "space".into(),
+        0x21 => "Page_Up".into(),
+        0x22 => "Page_Down".into(),
+        0x91 => "Scroll_Lock".into(),
+        _ => NAMED
+            .iter()
+            .find(|(_, v)| *v == vk)
+            .map(|(n, _)| n.to_string())
+            .ok_or_else(|| format!("Unsupported key in {s}"))?,
+    };
+    let prefix: String = [
+        (MOD_CONTROL, "<Control>"),
+        (MOD_ALT, "<Alt>"),
+        (MOD_SHIFT, "<Shift>"),
+        (MOD_WIN, "<Super>"),
+    ]
+    .iter()
+    .filter(|(flag, _)| mods & flag != 0)
+    .map(|(_, name)| *name)
+    .collect();
+    Ok(prefix + &key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gtk_accelerators() {
+        assert_eq!(to_gtk("Ctrl+Shift+Space").unwrap(), "<Control><Shift>space");
+        assert_eq!(to_gtk("Alt+Win+K").unwrap(), "<Alt><Super>k");
+        assert_eq!(to_gtk("F9").unwrap(), "F9");
+        assert_eq!(to_gtk("Ctrl+PageDown").unwrap(), "<Control>Page_Down");
+        assert_eq!(to_gtk("Shift+Left").unwrap(), "<Shift>Left");
+    }
 
     #[test]
     fn parses_common_hotkeys() {
