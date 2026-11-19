@@ -13,8 +13,8 @@ No account, no telemetry, one file of ~8-13 MB. You bring your own API key.
 - A small on-screen pill shows the state: recording (with a timer), transcribing, done, error.
   It never takes focus, so the text lands in the window you were typing in.
 - Your clipboard text is restored after pasting.
-- History of recent transcriptions (10 to 500, or off), viewable from Settings. Useful when the
-  text went to the wrong place.
+- History of recent transcriptions (10 to 500, or off), one click away in the tray menu. Useful
+  when the text went to the wrong place.
 - If a request fails, the recording is kept and can be retried from the tray menu.
 - A log (tray menu > View log) records recordings, transcriptions, errors and updates.
 - Updates itself: checks GitHub Releases at start and every hour, verifies the download's
@@ -49,8 +49,8 @@ remote control interface. Other Wayland desktops (KDE and others) are not suppor
 
 ## Using it
 
-The tray icon menu has Check for updates, View log, Settings and Quit, plus Retry after a
-failed request.
+The tray icon menu has Check for updates, History, View log, Settings and Quit, plus Retry after
+a failed request.
 
 ## Providers
 

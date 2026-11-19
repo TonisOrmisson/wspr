@@ -266,6 +266,7 @@ impl App {
             true,
             None,
         ));
+        let _ = menu.append(&MenuItem::with_id("history", "History", true, None));
         let _ = menu.append(&MenuItem::with_id("log", "View log", true, None));
         let _ = menu.append(&MenuItem::with_id("settings", "Settings…", true, None));
         let _ = menu.append(&PredefinedMenuItem::separator());
@@ -702,6 +703,7 @@ impl App {
             Msg::Menu(id) => match id.as_str() {
                 "retry" => self.retry(),
                 "update" => self.check_update(true),
+                "history" => self.open_history(),
                 "log" => open_file(&data_path("wspr.log")),
                 "settings" => self.open_settings(),
                 "quit" => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
