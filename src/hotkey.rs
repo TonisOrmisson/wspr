@@ -150,9 +150,49 @@ pub fn to_gtk(s: &str) -> Result<String, String> {
     Ok(prefix + &key)
 }
 
+/// The hotkey as a Qt key code, as KDE's shortcut service takes it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn to_qt(s: &str) -> Result<i32, String> {
+    let (mods, vk) = parse(s)?;
+    let key = match vk {
+        0x20 | 0x30..=0x39 | 0x41..=0x5A => vk,
+        0x60..=0x69 => 0x2000_0000 | (vk - 0x30), // keypad modifier + digit
+        0x70..=0x87 => 0x0100_0030 + (vk - 0x70),
+        0x21 => 0x0100_0016,
+        0x22 => 0x0100_0017,
+        0x23 => 0x0100_0011,
+        0x24 => 0x0100_0010,
+        0x25..=0x28 => 0x0100_0012 + (vk - 0x25),
+        0x2D => 0x0100_0006,
+        0x2E => 0x0100_0007,
+        0x13 => 0x0100_0008,
+        0x91 => 0x0100_0026,
+        _ => return Err(format!("Unsupported key in {s}")),
+    };
+    let qt_mods: u32 = [
+        (MOD_SHIFT, 0x0200_0000),
+        (MOD_CONTROL, 0x0400_0000),
+        (MOD_ALT, 0x0800_0000),
+        (MOD_WIN, 0x1000_0000),
+    ]
+    .iter()
+    .filter(|(flag, _)| mods & flag != 0)
+    .map(|(_, q)| q)
+    .sum();
+    Ok((qt_mods | key) as i32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qt_key_codes() {
+        assert_eq!(to_qt("Ctrl+Shift+Space").unwrap(), 0x0600_0020);
+        assert_eq!(to_qt("F9").unwrap(), 0x0100_0038);
+        assert_eq!(to_qt("Alt+Down").unwrap(), 0x0800_0000 | 0x0100_0015);
+        assert_eq!(to_qt("Ctrl+Num5").unwrap(), 0x0400_0000 | 0x2000_0035);
+    }
 
     #[test]
     fn gtk_accelerators() {

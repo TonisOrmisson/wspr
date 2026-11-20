@@ -65,7 +65,7 @@ fn data_path(name: &str) -> PathBuf {
 }
 
 /// One line in wspr.log. Never contains dictated text or API keys.
-fn log(msg: impl AsRef<str>) {
+pub fn log(msg: impl AsRef<str>) {
     let _ = applog::append(
         &data_path("wspr.log"),
         &format!("{} {}", platform::timestamp(), msg.as_ref()),
@@ -100,10 +100,17 @@ pub fn run() {
         .with_resizable(false)
         .with_inner_size(PILL)
         .with_position([-20000.0, -20000.0]);
-    let options = eframe::NativeOptions {
+    #[allow(unused_mut)]
+    let mut options = eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
+    #[cfg(target_os = "linux")]
+    if crate::wayland::use_x11() {
+        options.event_loop_builder = Some(Box::new(|b| {
+            winit::platform::x11::EventLoopBuilderExtX11::with_x11(b);
+        }));
+    }
     if let Err(e) = eframe::run_native("wspr", options, Box::new(|cc| Ok(Box::new(App::new(cc))))) {
         platform::alert(&format!("wspr could not start: {e}"));
     }
@@ -251,6 +258,13 @@ impl App {
         }
         self.menu_has_retry = Some(has_retry);
         let menu = Menu::new();
+        let _ = menu.append(&MenuItem::with_id(
+            "copy_last",
+            "Copy last transcription",
+            true,
+            None,
+        ));
+        let _ = menu.append(&PredefinedMenuItem::separator());
         if has_retry {
             let _ = menu.append(&MenuItem::with_id(
                 "retry",
@@ -619,6 +633,25 @@ impl App {
             .map_err(|e| format!("Could not save the history: {e}"))
     }
 
+    fn copy_last(&mut self) {
+        let Some(text) = self.history.first().map(|e| e.text.clone()) else {
+            return self.show(
+                Overlay::Info("No transcription in the history".into()),
+                Some(Duration::from_secs(3)),
+            );
+        };
+        match self.clipboard.as_mut().map(|c| c.set_text(text)) {
+            Some(Ok(())) => {
+                self.restore_clip = None; // a pending restore would overwrite what the user asked for
+                self.show(
+                    Overlay::Info("Copied".into()),
+                    Some(Duration::from_millis(1200)),
+                )
+            }
+            _ => self.fail("Could not copy to the clipboard".into()),
+        }
+    }
+
     fn open_history(&mut self) {
         if self.history.is_empty() {
             return platform::alert("No transcriptions in the history.");
@@ -703,6 +736,7 @@ impl App {
             Msg::Menu(id) => match id.as_str() {
                 "retry" => self.retry(),
                 "update" => self.check_update(true),
+                "copy_last" => self.copy_last(),
                 "history" => self.open_history(),
                 "log" => open_file(&data_path("wspr.log")),
                 "settings" => self.open_settings(),

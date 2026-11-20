@@ -1,6 +1,6 @@
 # wspr
 
-Minimal dictation for Windows 10/11 and Linux (X11, and Wayland on GNOME). Press a hotkey, speak, press it again: the audio is
+Minimal dictation for Windows 10/11 and Linux (X11, and Wayland on GNOME and KDE). Press a hotkey, speak, press it again: the audio is
 transcribed by OpenAI or by any speech-to-text model on OpenRouter, and the text is pasted where
 your cursor is.
 
@@ -43,13 +43,15 @@ On first start it copies itself to `~/.local/bin/wspr`, adds itself to the app m
 autostart, and opens the settings. Updates replace `~/.local/bin/wspr`. API keys go to the desktop
 keyring (GNOME Keyring or KWallet). Built on Ubuntu 24.04.
 
-On Wayland, programs may not grab keys or type into other windows, so wspr adds its hotkey to
-GNOME's keyboard shortcuts (Settings > Keyboard > Custom Shortcuts) and pastes through GNOME's
-remote control interface. Other Wayland desktops (KDE and others) are not supported yet.
+On Wayland, programs may not grab keys or type into other windows. On GNOME, wspr adds its hotkey
+to GNOME's keyboard shortcuts (Settings > Keyboard > Custom Shortcuts) and pastes through GNOME's
+remote control interface. On KDE, the hotkey is registered with KDE's shortcut service and pasting
+goes through the remote desktop portal: KDE asks once to allow it (Plasma 5 asks again at each
+start). Other Wayland desktops are not supported yet.
 
 ## Using it
 
-The tray icon menu has Check for updates, History, View log, Settings and Quit, plus Retry after
+The tray icon menu has Copy last transcription, Check for updates, History, View log, Settings and Quit, plus Retry after
 a failed request.
 
 ## Providers
