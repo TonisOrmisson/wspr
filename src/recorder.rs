@@ -11,7 +11,18 @@ pub struct Recording {
     pub rate: u32,
 }
 
+/// A stuck audio driver can block opening the microphone for good: wait on another thread,
+/// so wspr shows an error instead of freezing.
 pub fn start() -> Result<Recording, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || drop(tx.send(open())));
+    rx.recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap_or_else(|_| {
+            Err("The microphone does not respond. Restarting the computer usually helps.".into())
+        })
+}
+
+fn open() -> Result<Recording, String> {
     let device = cpal::default_host()
         .default_input_device()
         .ok_or("No microphone found")?;
@@ -69,7 +80,10 @@ impl Recording {
 
     /// Stop the stream and return the interleaved samples.
     pub fn finish(self) -> Vec<f32> {
-        drop(self.stream);
-        std::mem::take(&mut *self.buf.lock().unwrap_or_else(|p| p.into_inner()))
+        let samples = std::mem::take(&mut *self.buf.lock().unwrap_or_else(|p| p.into_inner()));
+        // Closing can block on a stuck audio driver as well.
+        let stream = self.stream;
+        std::thread::spawn(move || drop(stream));
+        samples
     }
 }
