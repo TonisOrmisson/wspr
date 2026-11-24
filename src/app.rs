@@ -22,6 +22,7 @@ const MAX_SECONDS: f32 = 600.0; // keeps the WAV under the APIs' 25 MB limit
 const MIN_SECONDS: f32 = 0.3;
 const UPDATE_FIRST: Duration = Duration::from_secs(15);
 const UPDATE_EVERY: Duration = Duration::from_secs(60 * 60);
+const TRAY_CHECK: Duration = Duration::from_secs(30);
 const UPDATE_RETRY: Duration = Duration::from_secs(10 * 60); // an update waits for dictation to finish
 const PILL: egui::Vec2 = egui::vec2(240.0, 40.0);
 const PILL_WIDE: egui::Vec2 = egui::vec2(600.0, 40.0);
@@ -138,6 +139,8 @@ struct App {
     tray: Option<TrayIcon>,
     /// Idle, recording, transcribing; by index, so one that fails to load shifts nothing.
     tray_icons: [Option<Icon>; 3],
+    tray_index: usize,
+    next_tray_check: Instant,
     menu_has_retry: Option<bool>,
     clipboard: Option<arboard::Clipboard>,
     enigo: Option<enigo::Enigo>,
@@ -190,6 +193,8 @@ impl App {
             hotkey: None,
             tray: None,
             tray_icons,
+            tray_index: 0,
+            next_tray_check: Instant::now() + TRAY_CHECK,
             menu_has_retry: None,
             clipboard: arboard::Clipboard::new().ok(),
             enigo: enigo::Enigo::new(&enigo::Settings::default()).ok(),
@@ -205,14 +210,7 @@ impl App {
                 log(format!("ERROR Hotkey: {e}"));
             }
         }
-        let mut builder = TrayIconBuilder::new()
-            .with_tooltip(app.tooltip())
-            .with_menu_on_left_click(true);
-        if let Some(idle) = app.tray_icons[0].clone() {
-            builder = builder.with_icon(idle);
-        }
-        app.tray = builder.build().ok();
-        app.refresh_menu();
+        app.make_tray();
         log(format!("wspr {VERSION} started"));
         app.announce_update();
         match platform::ensure_installed() {
@@ -244,7 +242,21 @@ impl App {
         )
     }
 
-    fn set_tray_icon(&self, i: usize) {
+    fn make_tray(&mut self) {
+        self.tray = None; // removes the old icon first
+        let mut builder = TrayIconBuilder::new()
+            .with_tooltip(self.tooltip())
+            .with_menu_on_left_click(true);
+        if let Some(icon) = self.tray_icons[self.tray_index].clone() {
+            builder = builder.with_icon(icon);
+        }
+        self.tray = builder.build().ok();
+        self.menu_has_retry = None;
+        self.refresh_menu();
+    }
+
+    fn set_tray_icon(&mut self, i: usize) {
+        self.tray_index = i;
         if let (Some(tray), Some(Some(icon))) = (&self.tray, self.tray_icons.get(i)) {
             let _ = tray.set_icon(Some(icon.clone()));
         }
@@ -773,6 +785,19 @@ impl App {
             } else {
                 next = next.min(*at);
             }
+        }
+        // Windows drops the icon when the taskbar is not ready yet at login, and does not say so:
+        // re-setting the icon fails then, so the tray is created again.
+        if cfg!(windows) {
+            if now >= self.next_tray_check {
+                self.next_tray_check = now + TRAY_CHECK;
+                let icon = self.tray_icons[self.tray_index].clone();
+                if icon.is_some() && self.tray.as_ref().is_none_or(|t| t.set_icon(icon).is_err()) {
+                    log("Tray icon was missing, added it again");
+                    self.make_tray();
+                }
+            }
+            next = next.min(self.next_tray_check);
         }
         if let State::Recording(r) = &self.state {
             if r.seconds() >= MAX_SECONDS {
