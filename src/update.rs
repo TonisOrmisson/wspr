@@ -1,14 +1,7 @@
-//! Update check against GitHub Releases: version comparison and installer asset lookup.
+//! Update check against GitHub Releases through github.com itself, not the GitHub API: the API
+//! allows only 60 requests an hour per IP address without a login, shared by everything on the network.
 
-pub const LATEST_URL: &str = "https://api.github.com/repos/TonisOrmisson/wspr/releases/latest";
-
-#[derive(Debug, PartialEq)]
-pub struct Release {
-    pub version: String,
-    pub url: String,
-    /// Lowercase hex SHA-256 of the installer, as published by GitHub.
-    pub sha256: String,
-}
+pub const RELEASES: &str = "https://github.com/TonisOrmisson/wspr/releases";
 
 fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
     let mut it = v
@@ -25,46 +18,28 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 }
 
 /// The release asset this platform updates from: the installer on Windows, the binary on Linux.
-pub fn is_update_asset(name: &str) -> bool {
+pub fn update_asset(version: &str) -> String {
     if cfg!(windows) {
-        name.starts_with("wspr-setup-") && name.ends_with(".exe")
+        format!("wspr-setup-{version}.exe")
     } else {
-        name == "wspr-linux-x86_64"
+        "wspr-linux-x86_64".into()
     }
 }
 
-/// Picks the asset `is_asset` accepts from a GitHub "latest release" JSON. None if there is none
-/// with a checksum.
-pub fn parse_latest(
-    json: &str,
-    is_asset: impl Fn(&str) -> bool,
-) -> Result<Option<Release>, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("Bad update info: {e}"))?;
-    let Some(tag) = v["tag_name"].as_str() else {
-        return Err(format!(
-            "Bad update info: {}",
-            v["message"].as_str().unwrap_or("no tag")
-        ));
-    };
-    let assets = v["assets"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    let installer = assets
-        .iter()
-        .find(|a| is_asset(a["name"].as_str().unwrap_or("")));
-    Ok(installer.and_then(|a| {
-        Some(Release {
-            version: tag.trim_start_matches('v').to_string(),
-            url: a["browser_download_url"].as_str()?.to_string(),
-            // Without a checksum the download cannot be verified, so it is not offered.
-            sha256: a["digest"]
-                .as_str()?
-                .strip_prefix("sha256:")?
-                .to_ascii_lowercase(),
-        })
-    }))
+/// The version /releases/latest redirects to, e.g. ".../releases/tag/v1.2.3" gives "1.2.3".
+pub fn version_from_location(location: &str) -> Option<String> {
+    let tag = location.rsplit_once("/tag/")?.1;
+    parse_version(tag)?;
+    Some(tag.trim_start_matches('v').to_string())
+}
+
+/// The lowercase SHA-256 of `name` in a SHA256SUMS file (`sha256sum` output).
+pub fn sum_for(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|l| {
+        let (hex, file) = l.trim().split_once(char::is_whitespace)?;
+        (file.trim().trim_start_matches('*') == name && hex.len() == 64)
+            .then(|| hex.to_ascii_lowercase())
+    })
 }
 
 pub fn sha256_matches(bytes: &[u8], expected_hex: &str) -> bool {
@@ -85,7 +60,6 @@ pub fn fetch_newer(current: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         let mut resp = agent
             .get(url)
             .header("User-Agent", &format!("wspr/{current}"))
-            .header("Accept", "application/vnd.github+json")
             .call()
             .map_err(|e| format!("Update check failed: {e}"))?;
         let status = resp.status().as_u16();
@@ -98,18 +72,34 @@ pub fn fetch_newer(current: &str) -> Result<Option<(String, Vec<u8>)>, String> {
             .read_to_vec()
             .map_err(|e| format!("Update download failed: {e}"))
     };
-    let json = String::from_utf8_lossy(&get(LATEST_URL)?).into_owned();
-    let Some(rel) = parse_latest(&json, is_update_asset)? else {
-        return Ok(None);
-    };
-    if !is_newer(&rel.version, current) {
+    let resp = agent
+        .get(&format!("{RELEASES}/latest"))
+        .header("User-Agent", &format!("wspr/{current}"))
+        .config()
+        .max_redirects(0)
+        .build()
+        .call()
+        .map_err(|e| format!("Update check failed: {e}"))?;
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| format!("Update check failed: HTTP {}", resp.status().as_u16()))?;
+    let version = version_from_location(location)
+        .ok_or_else(|| format!("Update check failed: no release in {location}"))?;
+    if !is_newer(&version, current) {
         return Ok(None);
     }
-    let bytes = get(&rel.url)?;
-    if !sha256_matches(&bytes, &rel.sha256) {
+    let base = format!("{RELEASES}/download/v{version}");
+    let name = update_asset(&version);
+    let sums = String::from_utf8_lossy(&get(&format!("{base}/SHA256SUMS"))?).into_owned();
+    // Without a checksum the download cannot be verified, so it is not installed.
+    let sha256 = sum_for(&sums, &name).ok_or("Update has no checksum")?;
+    let bytes = get(&format!("{base}/{name}"))?;
+    if !sha256_matches(&bytes, &sha256) {
         return Err("Update download is corrupt (checksum mismatch)".into());
     }
-    Ok(Some((rel.version, bytes)))
+    Ok(Some((version, bytes)))
 }
 
 #[cfg(test)]
@@ -133,47 +123,31 @@ mod tests {
         assert!(!is_newer("1.0.0.1", "0.2.0"));
     }
 
-    fn windows_asset(name: &str) -> bool {
-        name.starts_with("wspr-setup-") && name.ends_with(".exe")
-    }
-
     #[test]
     fn update_asset_per_platform() {
-        assert_eq!(
-            is_update_asset("wspr-linux-x86_64"),
-            cfg!(target_os = "linux")
-        );
-        assert_eq!(is_update_asset("wspr-setup-1.0.0.exe"), cfg!(windows));
-        assert!(!is_update_asset("wspr.exe"));
+        let name = update_asset("1.0.0");
+        assert_eq!(name == "wspr-linux-x86_64", cfg!(target_os = "linux"));
+        assert_eq!(name == "wspr-setup-1.0.0.exe", cfg!(windows));
     }
 
     #[test]
-    fn finds_installer_with_digest() {
-        let json = r#"{"tag_name":"v0.3.0","assets":[
-            {"name":"wspr.exe","browser_download_url":"https://x/wspr.exe","digest":"sha256:aa"},
-            {"name":"wspr-setup-0.3.0.exe","browser_download_url":"https://x/setup.exe","digest":"sha256:ABCD"}]}"#;
-        assert_eq!(
-            parse_latest(json, windows_asset),
-            Ok(Some(Release {
-                version: "0.3.0".into(),
-                url: "https://x/setup.exe".into(),
-                sha256: "abcd".into()
-            }))
-        );
+    fn reads_version_from_redirect() {
+        let loc = "https://github.com/TonisOrmisson/wspr/releases/tag/v0.12.2";
+        assert_eq!(version_from_location(loc), Some("0.12.2".into()));
+        assert_eq!(version_from_location("https://github.com/x/releases"), None);
+        assert_eq!(version_from_location("https://x/tag/latest"), None);
     }
 
     #[test]
-    fn rejects_missing_digest_and_errors() {
-        let no_digest = r#"{"tag_name":"v0.3.0","assets":[{"name":"wspr-setup-0.3.0.exe","browser_download_url":"https://x"}]}"#;
-        assert_eq!(parse_latest(no_digest, windows_asset), Ok(None));
-        assert_eq!(
-            parse_latest(r#"{"tag_name":"v0.3.0","assets":[]}"#, windows_asset),
-            Ok(None)
+    fn finds_checksum() {
+        let a = "a".repeat(64);
+        let sums = format!(
+            "{a}  wspr-linux-x86_64\n{}  *wspr-setup-1.0.0.exe\n",
+            "B".repeat(64)
         );
-        assert!(
-            parse_latest(r#"{"message":"Not Found"}"#, windows_asset)
-                .unwrap_err()
-                .contains("Not Found")
-        );
+        assert_eq!(sum_for(&sums, "wspr-linux-x86_64"), Some(a));
+        assert_eq!(sum_for(&sums, "wspr-setup-1.0.0.exe"), Some("b".repeat(64)));
+        assert_eq!(sum_for(&sums, "wspr.exe"), None);
+        assert_eq!(sum_for("abc  wspr.exe", "wspr.exe"), None);
     }
 }
